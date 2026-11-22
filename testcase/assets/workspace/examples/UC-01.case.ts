@@ -11,7 +11,7 @@ const db = defineService({
   image: "docker.io/library/postgres:16.4-alpine",
   ports: [{ container: 5432 }],
   env: { POSTGRES_DB: "pedidos_test", POSTGRES_PASSWORD: fromEnv("PG_PASSWORD") },
-  storage: "tmpfs",
+  tmpfs: ["/var/lib/postgresql/data"], // datos en memoria, se descartan al terminar
   artifacts: [
     { kind: "migration", source: "./db/migrations/*.sql" },
     { kind: "seed", source: "./db/seeds/usuarios.sql" },
@@ -19,10 +19,22 @@ const db = defineService({
   health: "pg_isready",
 });
 
+// Contenedor construido desde un Dockerfile del proyecto (las rutas son relativas a la raíz del proyecto).
+const pedidos = defineService({
+  name: "pedidos-svc",
+  build: { context: "./services/pedidos", dockerfile: "Dockerfile" },
+  ports: [{ container: 8080 }],
+  env: { DATABASE_URL: "postgres://app@postgres:5432/pedidos_test" },
+  dependsOn: [db],
+  http: true, // habla HTTP: tiene proxy de evidencia y métodos get/post…
+  health: "GET /healthz",
+});
+
 export default defineCase(() => {
   title(() => "Cliente no puede cancelar un pedido ajeno");
   notation("tenant", "tienda-norte"); // anotación de todo el caso
   notation("db", db.name);
+  notation("backend", pedidos.name);
 
   given("un pedido creado por María", async () => {
     notation("usuario", "pedro@acme.test"); // antes del request: la lleva el request que sigue

@@ -4,11 +4,12 @@
  * Ejecuta los casos de uso de `cases/*.case.ts` (escritos con defineCase(() => { title(); given(); when(); then(); })) con Playwright y prepara el reporte para importar la evidencia.
  *
  * Uso (desde el espacio de trabajo temporal):
- *   node run.ts --report /ruta/al/proyecto/.testcase/report.json --plan     # servicios: reporte + comandos de Podman
+ *   node run.ts --report /ruta/al/proyecto/.testcase/report.json --plan     # servicios: reporte + compose.yaml
  *   node run.ts --report /ruta/al/proyecto/.testcase/report.json [--only UC-01,UC-03] [--headed]
  *
  * --plan: pasa al reporte los servicios declarados con defineService, asigna puertos y proxies de evidencia,
- * e imprime un script de Podman para levantarlos y otro para detenerlos. No corre los casos.
+ * y escribe `<carpeta del reporte>/compose.yaml` (servicios + un proxy mitmdump por servicio HTTP).
+ * Imprime cómo levantarlo y detenerlo con `podman compose`. No corre los casos.
  *
  * Sin --plan:
  *   0. Pasa al reporte los servicios declarados con defineService (sin tocar health, proxy ni artefactos aplicados).
@@ -21,7 +22,7 @@
  * Después: detén los proxies (escriben el HAR), corre import-har.ts, sync-report.ts y render-report.ts.
  */
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { CaseAbort, createContext, declaredServices, type CaseDefinition, type RecordedCheck, type RecordedNotation, type ServiceDefinition, type ServiceTarget } from "./testcase.ts";
 
@@ -81,7 +82,6 @@ if (dup) {
 
 // Servicios declarados con defineService → report.services
 const PROXY_IMAGE = "docker.io/mitmproxy/mitmproxy:11.0.2";
-const NETWORK = "testcase";
 report.services ??= [];
 const declared = declaredServices();
 const usedPorts = new Set<number>(report.services.flatMap((s: any) => (s.ports ?? []).map((p: any) => p.host)));
@@ -96,7 +96,7 @@ for (const d of declared) {
   let s = report.services.find((x: any) => x.name === d.name);
   if (!s) report.services.push((s = { name: d.name }));
   if ("endpoint" in d) {
-    if (s.mode === "provisioned") for (const k of ["image", "ports", "env", "dependsOn", "storage", "readyMs", "artifacts"]) delete s[k];
+    if (s.mode === "provisioned") for (const k of ["image", "build", "ports", "env", "dependsOn", "storage", "readyMs", "artifacts"]) delete s[k];
     Object.assign(s, { mode: "connected", host: new URL(d.endpoint).host, endpoint: d.endpoint });
     if (d.version) s.version = d.version;
   } else {
@@ -109,7 +109,7 @@ for (const d of declared) {
     }));
     Object.assign(s, {
       mode: "provisioned",
-      image: d.image,
+      image: d.image ?? `localhost/testcase-${d.name}:latest`,
       endpoint: ports.length ? `localhost:${ports[0].host}` : d.name,
       ports,
       env: Object.entries(d.env ?? {}).map(([name, v]) =>
@@ -120,7 +120,12 @@ for (const d of declared) {
     const deps = (d.dependsOn ?? []).map((x) => (typeof x === "string" ? x : x.name));
     if (deps.length) s.dependsOn = deps;
     else delete s.dependsOn;
-    if (d.storage) s.storage = d.storage;
+    const storage = d.storage ?? (d.tmpfs?.length ? "tmpfs" : undefined);
+    if (storage) s.storage = storage;
+    if (d.build) {
+      const b = typeof d.build === "string" ? { context: d.build } : d.build;
+      s.build = { context: b.context, ...(b.dockerfile ? { dockerfile: b.dockerfile } : {}) };
+    } else delete s.build;
   }
   s.requestCount ??= 0;
 }
@@ -135,11 +140,8 @@ for (const d of declared) {
 }
 
 if (plan) {
-  const sh = (v: string) => (/^[\w@%+=:,./-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`);
-  const evidenceDir = join(reportDir, "evidence");
-  const usedProxy = new Set<number>(
-    report.services.map((s: any) => s.proxy?.listen).filter(Boolean).map((l: string) => Number(new URL(l).port)),
-  );
+  const projectRoot = dirname(reportDir);
+  const composePath = join(reportDir, "compose.yaml");
   const order: ServiceDefinition[] = [];
   const visit = (d: ServiceDefinition, seen: string[] = []) => {
     if (order.includes(d)) return;
@@ -151,19 +153,64 @@ if (plan) {
     order.push(d);
   };
   declared.forEach((d) => visit(d));
+  for (const d of declared) {
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(d.name)) {
+      console.error(`El nombre "${d.name}" no sirve como servicio de compose: usa minúsculas, números, - o _.`);
+      process.exit(1);
+    }
+  }
 
-  const up: string[] = ["set -eu", `mkdir -p ${sh(evidenceDir)}`, `podman network exists ${NETWORK} || podman network create ${NETWORK}`];
-  const down: string[] = [];
-  const downServices: string[] = [];
+  // Ruta del proyecto → ruta relativa a compose.yaml
+  const fromCompose = (p: string) => {
+    const r = relative(reportDir, resolve(projectRoot, p));
+    return r.startsWith(".") ? r : `./${r}`;
+  };
+  // En compose, `$` interpola variables: un valor literal lo escapa como `$$`.
+  const literal = (v: string) => v.replace(/\$/g, "$$$$");
+
+  const usedProxy = new Set<number>(
+    report.services.map((s: any) => s.proxy?.listen).filter(Boolean).map((l: string) => Number(new URL(l).port)),
+  );
+  const services: Record<string, any> = {};
+  const proxies: string[] = [];
   const pending: string[] = [];
+  const envVars = new Set<string>();
+  let builds = false;
+
   for (const d of order) {
     const s = report.services.find((x: any) => x.name === d.name);
     if (!("endpoint" in d)) {
-      const env = Object.entries(d.env ?? {}).flatMap(([k, v]) => ["-e", typeof v === "string" ? sh(`${k}=${v}`) : `${k}="$${v.fromEnv}"`]);
-      const ports = s.ports.flatMap((p: any) => ["-p", `${p.host}:${p.container}`]);
-      up.push("", `# ${d.name}`, ["podman run -d --rm", `--name tc-${d.name}`, `--network ${NETWORK}`, `--network-alias ${d.name}`, ...ports, ...env, sh(d.image)].join(" "));
-      downServices.unshift(`podman stop tc-${d.name}`);
-      if (d.storage === "tmpfs") pending.push(`${d.name}: storage tmpfs, agrega --tmpfs <directorio de datos de la imagen> al podman run`);
+      const svc: Record<string, any> = {};
+      if (d.image) svc.image = d.image;
+      if (d.build) {
+        builds = true;
+        const b = typeof d.build === "string" ? { context: d.build } : d.build;
+        svc.build = {
+          context: fromCompose(b.context),
+          ...(b.dockerfile ? { dockerfile: b.dockerfile } : {}),
+          ...(b.args ? { args: b.args } : {}),
+          ...(b.target ? { target: b.target } : {}),
+        };
+        svc.image ??= s.image;
+      }
+      svc.container_name = `tc-${d.name}`;
+      if (d.command) svc.command = d.command;
+      if (s.ports.length) svc.ports = s.ports.map((p: any) => `${p.host}:${p.container}${p.protocol && p.protocol !== "tcp" ? "/" + p.protocol : ""}`);
+      const env = Object.entries(d.env ?? {});
+      if (env.length) {
+        svc.environment = Object.fromEntries(
+          env.map(([k, v]) => {
+            if (typeof v === "string") return [k, literal(v)];
+            envVars.add(v.fromEnv);
+            return [k, `\${${v.fromEnv}:?Falta la variable ${v.fromEnv}}`];
+          }),
+        );
+      }
+      if (d.tmpfs?.length) svc.tmpfs = d.tmpfs;
+      else if (d.storage === "tmpfs") pending.push(`${d.name}: storage tmpfs sin ruta; declara tmpfs: ["<directorio de datos>"] en defineService`);
+      const deps = (d.dependsOn ?? []).map((x) => (typeof x === "string" ? x : x.name));
+      if (deps.length) svc.depends_on = deps;
+      services[d.name] = svc;
       for (const a of d.artifacts ?? []) pending.push(`${d.name}: aplicar ${a.kind} ${a.source}`);
       if (d.health) pending.push(`${d.name}: healthcheck ${d.health}`);
       if (isHttp(d) && !s.ports.length) throw new Error(`El servicio "${d.name}" es http pero no declara ports.`);
@@ -175,38 +222,50 @@ if (plan) {
         usedProxy.add(listenPort);
       }
       const upstream = "endpoint" in d ? new URL(d.endpoint).origin : `http://${d.name}:${s.ports[0].container}`;
-      s.proxy = {
-        engine: "podman",
+      const proxyName = `proxy-${d.name}`;
+      s.proxy = { engine: "podman", image: PROXY_IMAGE, container: `tc-${proxyName}`, listen: `http://localhost:${listenPort}`, upstream, evidence: `evidence/${d.name}.har` };
+      services[proxyName] = {
         image: PROXY_IMAGE,
-        container: `tc-proxy-${d.name}`,
-        listen: `http://localhost:${listenPort}`,
-        upstream,
-        evidence: `evidence/${d.name}.har`,
+        container_name: `tc-${proxyName}`,
+        command: ["mitmdump", "--mode", `reverse:${upstream}`, "--listen-port", "8080", "--set", `hardump=/evidence/${d.name}.har`],
+        ports: [`${listenPort}:8080`],
+        volumes: ["./evidence:/evidence:Z"],
+        ...("endpoint" in d ? {} : { depends_on: [d.name] }),
       };
-      up.push(
-        "",
-        `# proxy de evidencia de ${d.name}`,
-        [
-          "podman run -d --rm",
-          `--name tc-proxy-${d.name}`,
-          `--network ${NETWORK}`,
-          `-p ${listenPort}:8080`,
-          `-v ${sh(evidenceDir + ":/evidence:Z")}`,
-          PROXY_IMAGE,
-          `mitmdump --mode reverse:${upstream} --listen-port 8080 --set hardump=/evidence/${d.name}.har`,
-        ].join(" "),
-      );
-      down.push(`podman stop tc-proxy-${d.name}   # escribe evidence/${d.name}.har`);
-      if ("endpoint" in d && d.health) pending.push(`${d.name}: healthcheck ${d.health} (a través del proxy)`);
+      proxies.push(proxyName);
+      if ("endpoint" in d && d.health) pending.push(`${d.name}: healthcheck ${d.health} (a través de ${s.proxy.listen})`);
     }
   }
-  down.push(...downServices, `podman network ${"rm"} ${NETWORK}`);
+
+  const yaml = (v: any, indent = ""): string => {
+    if (Array.isArray(v)) return v.map((x) => `\n${indent}- ${typeof x === "object" && x ? yaml(x, indent + "  ").trimStart() : JSON.stringify(x)}`).join("");
+    if (v && typeof v === "object")
+      return Object.entries(v)
+        .map(([k, x]) => {
+          const key = /^[A-Za-z0-9_.-]+$/.test(k) ? k : JSON.stringify(k);
+          return x && typeof x === "object" ? `\n${indent}${key}:${yaml(x, indent + "  ")}` : `\n${indent}${key}: ${JSON.stringify(x)}`;
+        })
+        .join("");
+    return " " + JSON.stringify(v);
+  };
+  const compose =
+    `# Generado por run.ts --plan desde los defineService de los casos. No lo edites a mano: cambia los scripts y vuelve a generarlo.\n` +
+    `# Servicios: ${order.map((d) => d.name).join(", ")}. Proxies de evidencia: ${proxies.join(", ") || "ninguno"}.\n` +
+    `name: testcase` +
+    yaml({ services }) +
+    "\n";
+  mkdirSync(join(reportDir, "evidence"), { recursive: true });
+  writeFileSync(composePath, compose);
   writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
-  console.log("# Levantar servicios y proxies");
-  console.log(up.join("\n"));
-  console.log("\n# Detener (después de correr los casos; los proxies primero, así escriben el HAR)");
-  console.log(down.join("\n"));
-  if (pending.length) console.log("\n# Pendiente para el agente: registra en el reporte el resultado real de cada uno\n" + pending.map((p) => "#   " + p).join("\n"));
+
+  const c = `podman compose -f ${composePath}`;
+  console.log(`compose.yaml escrito en ${composePath}\n`);
+  if (envVars.size) console.log(`# Variables que deben existir en el entorno: ${[...envVars].join(", ")}\n`);
+  console.log(`# Levantar\n${c} up -d${builds ? " --build" : ""}\n`);
+  console.log(`# Detener, después de correr los casos. Primero los proxies, que escriben el HAR al detenerse:`);
+  if (proxies.length) console.log(`${c} stop ${proxies.join(" ")}`);
+  console.log(`${c} down\n`);
+  if (pending.length) console.log("# Pendiente para el agente: registra en el reporte el resultado real de cada uno\n" + pending.map((p) => "#   " + p).join("\n"));
   process.exit(0);
 }
 

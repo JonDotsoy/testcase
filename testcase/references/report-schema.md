@@ -201,7 +201,8 @@ Campos de `provisioned`:
 
 | Campo | Tipo | Req. | Descripción |
 |---|---|---|---|
-| `image` | string | sí | Imagen de Podman con su tag. |
+| `image` | string | sí | Imagen de Podman con su tag. Si se construyó, el nombre que quedó (por ejemplo `localhost/testcase-pedidos-svc:latest`). |
+| `build` | `{ context, dockerfile? }` | no | La imagen se construyó desde un Dockerfile del proyecto. |
 | `ports` | `{ host, container, protocol? }[]` | no | Puertos publicados. |
 | `env` | `{ name, source, value?, sensitive?, secretRef? }[]` | no | Origen de cada variable: `manifest`, `env-file`, `inferred` (credenciales inferidas para imágenes conocidas) o `service-ref`. |
 | `dependsOn` | string[] | no | Servicios que deben estar listos antes. |
@@ -1680,6 +1681,22 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
             },
             "image": {
               "type": "string"
+            },
+            "build": {
+              "type": "object",
+              "required": [
+                "context"
+              ],
+              "additionalProperties": false,
+              "description": "La imagen se construyó desde un Dockerfile del proyecto. `image` es el nombre que quedó.",
+              "properties": {
+                "context": {
+                  "type": "string"
+                },
+                "dockerfile": {
+                  "type": "string"
+                }
+              }
             },
             "ports": {
               "type": "array",

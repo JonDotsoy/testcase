@@ -234,14 +234,27 @@ export interface ConnectedServiceDefinition extends ServiceBase {
   version?: string;
 }
 
-/** Servicio que se levanta con Podman, con sus artefactos (migraciones, seeds…). */
+/** Cómo construir la imagen. Un texto es el contexto; las rutas son relativas a la raíz del proyecto. */
+export type BuildDefinition = string | { context: string; dockerfile?: string; args?: Record<string, string>; target?: string };
+
+/**
+ * Contenedor que se levanta con Podman, con sus artefactos (migraciones, seeds…).
+ * Lleva `image`, `build` o los dos (la imagen construida queda con ese nombre). `run.ts --plan` lo escribe en compose.yaml.
+ */
 export interface ProvisionedServiceDefinition extends ServiceBase {
-  image: string;
+  /** Imagen con su tag, por ejemplo `docker.io/library/postgres:16.4-alpine`. */
+  image?: string;
+  /** Construye la imagen desde un Dockerfile del proyecto. */
+  build?: BuildDefinition;
+  /** Comando del contenedor, si no es el de la imagen. */
+  command?: string | string[];
   /** Puertos del contenedor. Sin `host`, se asigna uno libre desde 55000. */
   ports?: Array<{ container: number; host?: number; protocol?: string }>;
   env?: Record<string, string | FromEnv>;
   dependsOn?: Array<string | Service>;
   storage?: "tmpfs" | "volume" | "none";
+  /** Rutas del contenedor montadas en memoria, por ejemplo `/var/lib/postgresql/data`. Implica `storage: "tmpfs"`. */
+  tmpfs?: string[];
   artifacts?: ArtifactDefinition[];
   /** El servicio habla HTTP: sus requests pasan por el proxy de evidencia. Por defecto false. */
   http?: boolean;
@@ -269,12 +282,13 @@ export function declaredServices(): ServiceDefinition[] {
  *
  *   const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
  *   const db = defineService({ name: "postgres", image: "docker.io/library/postgres:16.4-alpine", ports: [{ container: 5432 }] });
+ *   const svc = defineService({ name: "pedidos-svc", build: "./services/pedidos", ports: [{ container: 8080 }], dependsOn: [db], http: true });
  */
 export function defineService(def: ServiceDefinition): Service {
   if (!def?.name) throw new Error("defineService() necesita un name.");
   const isConnected = "endpoint" in def && !!def.endpoint;
-  const isProvisioned = "image" in def && !!def.image;
-  if (isConnected === isProvisioned) throw new Error(`defineService("${def.name}"): declara endpoint (servicio conectado) o image (servicio provisionado), uno de los dos.`);
+  const isProvisioned = ("image" in def && !!def.image) || ("build" in def && !!def.build);
+  if (isConnected === isProvisioned) throw new Error(`defineService("${def.name}"): declara endpoint (servicio conectado) o image/build (contenedor), no los dos.`);
   const prev = declared.get(def.name);
   if (prev && !isDeepStrictEqual(normalizeDef(prev), normalizeDef(def))) {
     throw new Error(`El servicio "${def.name}" está declarado dos veces con definiciones distintas. Usa la misma definición en todos los scripts que lo declaran.`);

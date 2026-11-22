@@ -68,7 +68,7 @@ const db = defineService({
   image: "docker.io/library/postgres:16.4-alpine",
   ports: [{ container: 5432 }],
   env: { POSTGRES_DB: "pedidos_test", POSTGRES_PASSWORD: fromEnv("PG_PASSWORD") },
-  storage: "tmpfs",
+  tmpfs: ["/var/lib/postgresql/data"],
   artifacts: [{ kind: "migration", source: "./db/migrations/*.sql" }, { kind: "seed", source: "./db/seeds/usuarios.sql" }],
   health: "pg_isready",
 });
@@ -113,7 +113,7 @@ La API completa:
 | `id("UC-NN")` | Opcional. Por defecto el id sale del nombre del archivo (`UC-03.case.ts` → `UC-03`). |
 | `given(texto, fn?)` · `when(…)` · `then(…)` | Pasos. Se ejecutan en el orden en que se escriben. `fn` es opcional: `given("un pedido de María")` deja el paso solo como texto. |
 | `defineService({ name, endpoint, … })` | Servicio URL que ya existe (`connected`). Campos: `endpoint`, `version?`, `health?`. |
-| `defineService({ name, image, … })` | Contenedor (`provisioned`). Campos: `image`, `ports?` (`{ container, host? }`; sin `host` se asigna uno desde 55000), `env?`, `dependsOn?` (nombres o servicios), `storage?`, `artifacts?` (`{ kind, source, description? }`), `health?`, `http?` (si habla HTTP, va por proxy). |
+| `defineService({ name, image \| build, … })` | Contenedor (`provisioned`). Campos: `image` o `build` (texto con el contexto, o `{ context, dockerfile?, args?, target? }`; rutas relativas a la raíz del proyecto), `command?`, `tmpfs?` (rutas en memoria), `ports?` (`{ container, host? }`; sin `host` se asigna uno desde 55000), `env?`, `dependsOn?` (nombres o servicios), `storage?`, `artifacts?` (`{ kind, source, description? }`), `health?`, `http?` (si habla HTTP, va por proxy). |
 | `fromEnv("VAR")` | Valor de `env` que sale del entorno del host. Queda enmascarado en el reporte. |
 | `servicio.get/post/put/patch/delete/fetch(ruta, opts)` | Request HTTP (Playwright) por el proxy del servicio, con `data`, `form`, `params`, `headers`. Devuelve `status()`, `headers()`, `json()`, `text()`. |
 | `servicio.url(ruta)` | URL del servicio por el proxy, para `page().goto()`. |
@@ -139,19 +139,21 @@ Reglas:
 
 ### 3. Proveer los servicios
 
-Los servicios salen de los `defineService` de los scripts. **Usa Podman para todo contenedor.** Usa Docker solo si Podman no está instalado, y dilo en el reporte (`proxy.engine`, `run.runtime.engine`).
+Los servicios salen de los `defineService` de los scripts, y se levantan con un **archivo compose** que genera `run.ts`. **Usa Podman** (`podman compose`). Usa Docker (`docker compose`) solo si Podman no está instalado, y dilo en el reporte (`proxy.engine`, `run.runtime.engine`).
 
 ```sh
-cd "$WS" && node run.ts --report /ruta/al/proyecto/.testcase/report.json --plan > /tmp/tc-plan.txt
+cd "$WS" && node run.ts --report /ruta/al/proyecto/.testcase/report.json --plan
 ```
 
-`--plan` pasa al reporte los servicios declarados (`connected` con `host` y `endpoint`; `provisioned` con `image`, `ports`, `env` enmascarado y `dependsOn`), les asigna puertos y un proxy de evidencia a cada servicio HTTP, y escribe en el reporte `services[].proxy`. Imprime tres bloques:
+`--plan` pasa al reporte los servicios declarados (`connected` con `host` y `endpoint`; `provisioned` con `image`, `build`, `ports`, `env` enmascarado y `dependsOn`), les asigna puertos y un proxy de evidencia a cada servicio HTTP, y escribe `.testcase/compose.yaml`:
 
-1. **Levantar**: una red de Podman `testcase`, cada contenedor en orden de `dependsOn` (con `--network-alias <nombre>`, así otro contenedor lo alcanza como `postgres:5432`) y un contenedor `mitmdump` por servicio HTTP.
-2. **Detener**: primero los proxies (al detenerse escriben `evidence/<servicio>.har`), después los contenedores y la red.
-3. **Pendiente para el agente**: los artefactos por aplicar y los healthchecks.
+- Un servicio de compose por contenedor, con `image` o `build` (contexto relativo a la raíz del proyecto), `ports`, `environment`, `tmpfs`, `command` y `depends_on`. Los contenedores se alcanzan entre sí por su nombre (`postgres:5432`).
+- Un servicio `proxy-<nombre>` (mitmdump) por cada servicio HTTP, que escribe `.testcase/evidence/<nombre>.har` al detenerse.
+- Los valores de `fromEnv()` quedan como `${VAR:?…}`: compose falla con un mensaje claro si la variable no existe.
 
-Revisa el bloque, córrelo y completa lo pendiente con datos reales:
+No edites `compose.yaml` a mano: cambia los scripts y vuelve a correr `--plan`. La salida dice cómo levantarlo (`podman compose -f .testcase/compose.yaml up -d`, con `--build` si hay imágenes que construir), cómo detenerlo (primero `stop` de los proxies, después `down`) y qué queda pendiente para ti.
+
+Levanta el compose y completa lo pendiente con datos reales:
 
 - Aplica cada artefacto (migraciones, seeds, `.proto`, stubs) y regístralo en `artifacts` con su `status`, `items` y tiempos.
 - Corre cada healthcheck y guarda el resultado en `health` (`healthy`, `unhealthy` o `timeout`). Un servicio conectado se revisa a través de su proxy.
@@ -173,7 +175,7 @@ node run.ts --report …/report.json --only UC-03                               
 
 Después:
 
-1. Corre el bloque **Detener** de `--plan`. Los proxies se detienen primero y mitmdump escribe el HAR al detenerse.
+1. Detén el compose como indica `--plan`: primero `podman compose -f .testcase/compose.yaml stop proxy-…` (mitmdump escribe el HAR al detenerse), después `down`.
 2. Importa la evidencia de cada servicio:
 
    ```sh
@@ -208,7 +210,7 @@ Al terminar, borra el espacio de trabajo temporal (`rm -rf "$WS"`). Los scripts 
 
 ## Cambios posteriores
 
-- **La persona agrega o cambia un caso**: edita o crea su script, corre `--plan` si cambió algún servicio, levanta los proxies, corre `run.ts --only UC-NN`, importa, sincroniza y genera el HTML. Una corrida con `--only` reemplaza los requests del reporte: si quieres el reporte completo, corre todos los casos.
+- **La persona agrega o cambia un caso**: edita o crea su script, corre `--plan` si cambió algún servicio, levanta el compose, corre `run.ts --only UC-NN`, importa, sincroniza y genera el HTML. Una corrida con `--only` reemplaza los requests del reporte: si quieres el reporte completo, corre todos los casos.
 - **La persona quita un caso**: borra su script y su elemento en `useCases`, y vuelve a correr.
 - **Historial**: antes de una corrida nueva, guarda una copia como `.testcase/report-<número>.json` si la persona lo pide.
 
