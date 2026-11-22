@@ -1,7 +1,7 @@
 /**
  * run.ts
  *
- * Ejecuta los casos de uso de `cases/*.case.ts` con Playwright y prepara el reporte para importar la evidencia.
+ * Ejecuta los casos de uso de `cases/*.case.ts` (escritos con defineCase(() => { title(); given(); when(); then(); })) con Playwright y prepara el reporte para importar la evidencia.
  *
  * Uso (desde el espacio de trabajo temporal):
  *   node run.ts --report /ruta/al/proyecto/.testcase/report.json [--only UC-01,UC-03] [--headed]
@@ -64,10 +64,21 @@ if (!files.length) {
 }
 const defs: Array<{ def: CaseDefinition; file: string }> = [];
 for (const f of files) {
-  const mod = await import(pathToFileURL(join(casesDir, f)).href);
+  let mod: any;
+  try {
+    mod = await import(pathToFileURL(join(casesDir, f)).href);
+  } catch (e) {
+    console.error(`${f}: ${(e as Error).message}`);
+    process.exit(1);
+  }
   const def: CaseDefinition = mod.default;
-  if (!def?.id || typeof def.run !== "function") {
-    console.error(`${f} no exporta un caso válido (usa: export default defineCase({ id, title, given, when, then, run }))`);
+  if (!def || typeof def.run !== "function" || !Array.isArray(def.steps)) {
+    console.error(`${f} no exporta un caso válido. Usa: export default defineCase(() => { title(…); given(…, async (t) => …); when(…); then(…); })`);
+    process.exit(1);
+  }
+  def.id ||= /^(UC-\d+)/i.exec(f)?.[1]?.toUpperCase() ?? "";
+  if (!def.id) {
+    console.error(`${f}: no tiene id. Nombra el archivo UC-NN.case.ts o declara id("UC-NN") dentro de defineCase().`);
     process.exit(1);
   }
   defs.push({ def, file: f });

@@ -54,38 +54,49 @@ Si ya hay scripts en `.testcase/cases/` de una corrida anterior, cópialos a `$W
 
 ### 2. Escribir cada caso de uso como script
 
-Un archivo por caso en `$WS/cases/UC-NN.case.ts`. El script define el caso (id, título, given, when, then) y lo ejecuta:
+Un archivo por caso en `$WS/cases/UC-NN.case.ts`. El caso se escribe con la sintaxis de `testcase.ts`: `defineCase` recibe una función que declara el título y los pasos, y cada paso trae su propia función con el código que lo ejecuta.
 
 ```ts
-import { defineCase } from "../testcase.ts";
+import { defineCase, title, annotations, given, when, then } from "../testcase.ts";
 
-export default defineCase({
-  id: "UC-03",
-  title: "Cliente no puede cancelar un pedido ajeno",
-  given: "un pedido creado por María",
-  when: "Pedro intenta cancelarlo",
-  then: "la API responde 403 y el pedido sigue en estado pending",
-  annotations: { tenant: "tienda-norte" },
+export default defineCase(() => {
+  title(() => "Cliente no puede cancelar un pedido ajeno");
+  annotations({ tenant: "tienda-norte" });                    // anotaciones de todo el caso
 
-  async run(t) {
-    const api = t.api("api");                       // Playwright APIRequestContext, por el proxy del servicio
-
-    await t.step("given", { usuario: "pedro@acme.test", perfil: "cliente" });
-    const login = await api.post("/v1/auth/token", { data: { email: "pedro@acme.test", password: process.env.PEDRO_PASSWORD } });
+  given("un pedido creado por María", { usuario: "pedro@acme.test", perfil: "cliente" }, async (t) => {
+    const login = await t.api("api").post("/v1/auth/token", { data: { email: "pedro@acme.test", password: process.env.PEDRO_PASSWORD } });
     t.require("status == 200", login.status(), 200, { response: login });
-    const { access_token } = await login.json();
+    t.vars.token = (await login.json()).access_token;
+  });
 
-    await t.step("when", { usuario: "pedro@acme.test", perfil: "cliente", "dueño-del-recurso": "maria@acme.test" });
-    const del = await api.delete("/v1/orders/ord_01JD9", { headers: { authorization: `Bearer ${access_token}` } });
-    t.check("status == 403", del.status(), 403, { response: del, expectedFailure: true });
+  when("Pedro intenta cancelarlo", { usuario: "pedro@acme.test", "dueño-del-recurso": "maria@acme.test" }, async (t) => {
+    t.vars.cancel = await t.api("api").delete("/v1/orders/ord_01JD9", { headers: { authorization: `Bearer ${t.vars.token}` } });
+  });
 
-    await t.step("then", { usuario: "maria@acme.test", perfil: "cliente" });
-    const page = await t.page();                    // navegador de Playwright, también por el proxy
+  then("la API responde 403", async (t) => {
+    t.check("status == 403", t.vars.cancel.status(), 403, { response: t.vars.cancel, expectedFailure: true });
+  });
+
+  then("el pedido sigue en estado pending", { usuario: "maria@acme.test", perfil: "cliente" }, async (t) => {
+    const page = await t.page();                              // navegador de Playwright, también por el proxy
     await page.goto(t.url("api", "/pedidos/ord_01JD9"));
-    t.check("estado visible == \"pending\"", await page.locator("[data-estado]").textContent(), "pending");
-  },
+    t.check('estado visible == "pending"', await page.locator("[data-estado]").textContent(), "pending");
+  });
 });
 ```
+
+La sintaxis:
+
+| | |
+|---|---|
+| `defineCase(() => { … })` | Declara el caso. La función corre una vez al cargar el archivo y debe ser síncrona: el código async va dentro de los pasos. |
+| `title(texto)` o `title(() => texto)` | Título del caso. Una vez por caso. |
+| `id("UC-NN")` | Opcional. Por defecto el id sale del nombre del archivo (`UC-03.case.ts` → `UC-03`). |
+| `annotations({ … })` | Anotaciones que llevan todos los requests del caso. |
+| `given(texto, fn)` · `given(texto, anotaciones, fn)` | Paso que prepara el estado. Las anotaciones son solo de ese paso. `fn` es opcional: `given("un pedido de María")` deja el paso solo como texto. |
+| `when(…)` · `then(…)` | Igual que `given`, para la acción y la verificación. |
+
+Cada caso necesita `title` y al menos un `given`, un `when` y un `then`. Puedes repetir cualquier paso: se ejecutan en el orden en que se escriben, y en el reporte sus textos se unen con " y ". Cada `fn` recibe el contexto `t`. Para pasar datos de un paso al siguiente, usa `t.vars`.
 
 Lo que ofrece `t` (ver `testcase.ts`):
 
@@ -94,16 +105,15 @@ Lo que ofrece `t` (ver `testcase.ts`):
 | `t.api(servicio)` | Cliente HTTP de Playwright hacia el servicio, a través de su proxy. `get`, `post`, `put`, `patch`, `delete`, `fetch`, con `data`, `form`, `params`, `headers` y `annotations`. |
 | `t.page()` | Página de Playwright. Todos sus requests llevan las etiquetas del caso y del paso. |
 | `t.url(servicio, ruta)` | URL del servicio por el proxy, para `page.goto()`. |
-| `t.step(paso, anotaciones)` | Empieza `given`, `when` o `then` con sus anotaciones. |
 | `t.annotate(anotaciones)` | Suma anotaciones al paso actual. |
-| `t.check(expresión, actual, esperado, { response?, expectedFailure? })` | Registra una aserción y sigue. Sin `response`, se une al último request del paso. |
+| `t.check(expresión, actual, esperado, { response?, expectedFailure? })` | Registra una aserción y sigue. Sin `response`, se une al último request del paso, o al último del caso si el paso no hizo ninguno (por ejemplo, un `then` que revisa la respuesta del `when`). |
 | `t.require(…)` | Igual que `check`, pero detiene el caso si falla. |
 | `t.vars` | Datos compartidos entre pasos. |
 
 Reglas:
 
 - Un caso cubre un solo comportamiento. Si la persona describe varios en una frase, sepáralos y díselo.
-- Usa las palabras de la persona en `title`, `given`, `when` y `then`. No inventes reglas de negocio: si algo es ambiguo, pregunta o escribe la lectura más probable y avísale.
+- Usa las palabras de la persona en `title()`, `given()`, `when()` y `then()`. No inventes reglas de negocio: si algo es ambiguo, pregunta o escribe la lectura más probable y avísale.
 - Los ids `UC-NN` son estables. No renumeres casos existentes.
 - Las aserciones verifican lo que dice el `then`. Si el comportamiento correcto es un error (403, 429, un `errors` de GraphQL), pídelo de forma explícita con `expectedFailure: true`.
 - Las credenciales salen de variables de entorno (`process.env`), nunca escritas en el script.
