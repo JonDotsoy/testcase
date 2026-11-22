@@ -137,7 +137,17 @@ const text = (v: Text, fn: string): string => {
   return s.trim();
 };
 
-/** Define un caso de uso. La función registra el título y los pasos con title(), given(), when() y then(). */
+const definedCases: CaseDefinition[] = [];
+
+/** Casos definidos desde la última llamada, en orden. Lo usa run.ts después de importar cada archivo. */
+export function takeDefinedCases(): CaseDefinition[] {
+  return definedCases.splice(0);
+}
+
+/**
+ * Define un caso de uso. La función registra el título y los pasos con title(), given(), when() y then().
+ * Un archivo puede definir varios casos; en ese caso cada uno declara su id("UC-NN").
+ */
 export function defineCase(build: () => void): CaseDefinition {
   if (draft) throw new Error("defineCase() no se puede anidar.");
   const d: Draft = { annotations: {}, steps: [] };
@@ -154,7 +164,7 @@ export function defineCase(build: () => void): CaseDefinition {
   }
   const join = (p: Paso) => d.steps.filter((s) => s.paso === p).map((s) => s.description).join(" y ");
   const steps = d.steps;
-  return {
+  const def: CaseDefinition = {
     id: d.id ?? "",
     title: d.title,
     given: join("given"),
@@ -171,6 +181,8 @@ export function defineCase(build: () => void): CaseDefinition {
       });
     },
   };
+  definedCases.push(def);
+  return def;
 }
 
 /** Título del caso, en palabras de la persona. Acepta un texto o una función que lo devuelve. */

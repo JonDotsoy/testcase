@@ -24,7 +24,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { CaseAbort, createContext, declaredServices, maskSensitive, sensitiveValues, type CaseDefinition, type RecordedCheck, type RecordedNotation, type ServiceDefinition, type ServiceTarget } from "./testcase.ts";
+import { CaseAbort, createContext, declaredServices, maskSensitive, sensitiveValues, takeDefinedCases, type CaseDefinition, type RecordedCheck, type RecordedNotation, type ServiceDefinition, type ServiceTarget } from "./testcase.ts";
 
 const args = process.argv.slice(2);
 const opt = (name: string) => {
@@ -49,7 +49,7 @@ const casesDir = join(here, "cases");
 // Casos
 const files = existsSync(casesDir) ? readdirSync(casesDir).filter((f) => f.endsWith(".case.ts")).sort() : [];
 if (!files.length) {
-  console.error(`No hay casos en ${casesDir}. Escribe un archivo <UC-NN>.case.ts por caso de uso.`);
+  console.error(`No hay casos en ${casesDir}. Escribe archivos *.case.ts con defineCase().`);
   process.exit(1);
 }
 const defs: Array<{ def: CaseDefinition; file: string }> = [];
@@ -61,17 +61,25 @@ for (const f of files) {
     console.error(`${f}: ${(e as Error).message}`);
     process.exit(1);
   }
-  const def: CaseDefinition = mod.default;
-  if (!def || typeof def.run !== "function" || !Array.isArray(def.steps)) {
-    console.error(`${f} no exporta un caso válido. Usa: export default defineCase(() => { title(…); given(…, async (t) => …); when(…); then(…); })`);
+  const found = takeDefinedCases();
+  if (!found.length) {
+    console.error(`${f} no define ningún caso. Usa: defineCase(() => { title(…); given(…); when(…); then(…); })`);
     process.exit(1);
   }
-  def.id ||= /^(UC-\d+)/i.exec(f)?.[1]?.toUpperCase() ?? "";
-  if (!def.id) {
-    console.error(`${f}: no tiene id. Nombra el archivo UC-NN.case.ts o declara id("UC-NN") dentro de defineCase().`);
-    process.exit(1);
+  // Un caso solo en el archivo puede tomar el id del nombre (UC-03.case.ts). Con varios, cada uno declara id().
+  const fromName = found.length === 1 ? /^(UC-\d+)/i.exec(f)?.[1]?.toUpperCase() : undefined;
+  for (const def of found) {
+    def.id ||= fromName ?? "";
+    if (!def.id) {
+      console.error(
+        found.length > 1
+          ? `${f}: define ${found.length} casos y "${def.title}" no tiene id. Declara id("UC-NN") en cada defineCase().`
+          : `${f}: no tiene id. Nombra el archivo UC-NN.case.ts o declara id("UC-NN") dentro de defineCase().`,
+      );
+      process.exit(1);
+    }
+    defs.push({ def, file: f });
   }
-  defs.push({ def, file: f });
 }
 const ids = defs.map((d) => d.def.id);
 const dup = ids.find((id, i) => ids.indexOf(id) !== i);

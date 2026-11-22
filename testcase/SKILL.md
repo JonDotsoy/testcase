@@ -54,7 +54,7 @@ Si ya hay scripts en `.testcase/cases/` de una corrida anterior, cópialos a `$W
 
 ### 2. Escribir cada caso de uso como script
 
-Un archivo por caso en `$WS/cases/UC-NN.case.ts`. **Cada script es autocontenido**: importa desde `testcase.ts` todo lo que usa y declara con `defineService` los servicios que necesita. Así, el script basta para saber qué se prueba, contra qué y cómo.
+Los casos van en `$WS/cases/*.case.ts`: un archivo por caso (`UC-NN.case.ts`) o varios casos relacionados en un archivo. **Cada script es autocontenido**: importa desde `testcase.ts` todo lo que usa y declara con `defineService` los servicios que necesita. Así, el script basta para saber qué se prueba, contra qué y cómo.
 
 ```ts
 import { defineCase, defineService, fromEnv, sensitive, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";
@@ -108,9 +108,9 @@ La API completa:
 
 | | |
 |---|---|
-| `defineCase(() => { … })` | Declara el caso. La función corre una vez al cargar el archivo y debe ser síncrona: el código async va dentro de los pasos. |
+| `defineCase(() => { … })` | Declara el caso. La función corre una vez al cargar el archivo y debe ser síncrona: el código async va dentro de los pasos. Un archivo puede tener varios `defineCase` (por ejemplo `pedidos.case.ts` con UC-04 y UC-05 que comparten servicios); `export default` es opcional. |
 | `title(texto)` · `title(() => texto)` | Título del caso. Una vez por caso. |
-| `id("UC-NN")` | Opcional. Por defecto el id sale del nombre del archivo (`UC-03.case.ts` → `UC-03`). |
+| `id("UC-NN")` | Si el archivo tiene un solo caso, es opcional: el id sale del nombre (`UC-03.case.ts` → `UC-03`). Si tiene varios, cada caso declara el suyo. |
 | `given(texto, fn?)` · `when(…)` · `then(…)` | Pasos. Se ejecutan en el orden en que se escriben. `fn` es opcional: `given("un pedido de María")` deja el paso solo como texto. |
 | `defineService({ name, endpoint, … })` | Servicio URL que ya existe (`connected`). Campos: `endpoint`, `version?`, `health?`. |
 | `defineService({ name, image \| build, … })` | Contenedor (`provisioned`). Campos: `image` o `build` (texto con el contexto, o `{ context, dockerfile?, args?, target? }`; rutas relativas a la raíz del proyecto), `command?`, `tmpfs?` (rutas en memoria), `ports?` (`{ container, host? }`; sin `host` se asigna uno desde 55000), `env?`, `dependsOn?` (nombres o servicios), `storage?`, `artifacts?` (`{ kind, source, description? }`), `health?`, `http?` (si habla HTTP, va por proxy). |
