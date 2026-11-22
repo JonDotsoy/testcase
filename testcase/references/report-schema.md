@@ -10,7 +10,7 @@ Archivos junto a este documento:
 - `report.schema.json`: el JSON Schema completo, igual al del final de este documento.
 - `example.json`: un reporte recortado que valida contra el schema. Es el mismo ejemplo del final.
 - `report-run-148.json`: el reporte completo de la corrida #148 (9 casos de uso y 24 requests), con secretos incluidos. Es el JSON que genera el HTML publicado.
-- `render/render-report.ts` y `render/report.template.html`: el script que convierte el JSON en HTML. Ver [Generar el HTML](#generar-el-html).
+- `scripts/render-report.ts` y `assets/report.template.html`: el script que convierte el JSON en HTML. Ver [Generar el HTML](#generar-el-html).
 
 ## Principios
 
@@ -123,6 +123,7 @@ Campos comunes a todos los protocolos:
 | `response` | `{ status, headers, trailers?, body, frames?, sizeBytes? }` | sí | Lo que se recibió. |
 | `assertions` | [Assertion](#assertion)[] | sí | Aserciones evaluadas sobre este request. |
 | `reproduce` | `{ tool, command, env? }` | no | Comando equivalente. Los secretos se reemplazan por variables de entorno, listadas en `env`. |
+| `evidence` | `{ source, file?, entry? }` | no | Origen de la evidencia: `proxy` (capturada por el proxy de un servicio URL), `agent` (registrada por el agente) o `runner` (testmania). `file` y `entry` apuntan a la entrada del archivo de evidencia, por ejemplo un HAR. |
 
 ### Lectura por protocolo
 
@@ -215,8 +216,9 @@ Campos de `connected`:
 | `host` | string | sí | Host externo, por ejemplo `api.example.com`. |
 | `version` | string | no | Versión que reporta el servicio. |
 | `tls` | `{ version, validUntil }` | no | Datos del certificado, si el servicio usa TLS. |
+| `proxy` | `{ engine?, image, container?, listen, upstream, evidence? }` | no | Contenedor proxy (Podman por defecto) que se interpone entre las pruebas y el servicio para capturar la evidencia de cada request y response. Las pruebas llaman a `listen` y el proxy reenvía a `upstream`. |
 
-testmania no carga artefactos en un servicio `connected`, no lo levanta y no lo detiene.
+testmania no carga artefactos en un servicio `connected`, no lo levanta y no lo detiene. Sí puede levantar un proxy delante de él: el proxy es suyo y se elimina al terminar, el servicio no.
 
 ### Artifact
 
@@ -266,10 +268,10 @@ El HTML muestra primero los eventos `request` agrupados por caso de uso y despu�
 `render-report.ts` lee el JSON y escribe un HTML de un solo archivo. El script no tiene dependencias y corre con Node 22.6 o superior, que ejecuta TypeScript directamente.
 
 ```sh
-node render/render-report.ts report-run-148.json                     # escribe report-run-148.html
-node render/render-report.ts report-run-148.json -o reporte.html
-node render/render-report.ts report-run-148.json --strip-secrets     # quita "secrets" aunque el JSON los traiga
-node render/render-report.ts report-run-148.json --fragment          # solo el contenido, sin <html> ni <head>
+node scripts/render-report.ts report-run-148.json                     # escribe report-run-148.html
+node scripts/render-report.ts report-run-148.json -o reporte.html
+node scripts/render-report.ts report-run-148.json --strip-secrets     # quita "secrets" aunque el JSON los traiga
+node scripts/render-report.ts report-run-148.json --fragment          # solo el contenido, sin <html> ni <head>
 ```
 
 Qué hace el script:
@@ -278,7 +280,7 @@ Qué hace el script:
 2. Incrusta el JSON en la plantilla, dentro de `<script type="application/json" id="report-data">`, escapando `<`, `>` y `&`.
 3. Escribe el HTML. Toda la presentación se arma en el navegador a partir de ese JSON. El botón "Mostrar valores sensibles" aparece solo si el JSON trae `secrets`.
 
-Con Node más antiguo se puede usar `npx tsx render/render-report.ts …`. En testmania este script sería la implementación de `testmania run --report html`: el comando escribe el JSON y después genera el HTML con la misma plantilla.
+Con Node más antiguo se puede usar `npx tsx scripts/render-report.ts …`. En testmania este script sería la implementación de `testmania run --report html`: el comando escribe el JSON y después genera el HTML con la misma plantilla.
 
 ## Ejemplo
 
@@ -587,467 +589,1297 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
   "$id": "https://testmania.dev/schemas/report/1.0.json",
   "title": "testmania run report",
   "type": "object",
-  "required": ["$schema", "reportVersion", "tool", "run", "manifest", "summary", "useCases", "requests", "services", "timeline"],
+  "required": [
+    "$schema",
+    "reportVersion",
+    "tool",
+    "run",
+    "manifest",
+    "summary",
+    "useCases",
+    "requests",
+    "services",
+    "timeline"
+  ],
   "additionalProperties": false,
   "properties": {
-    "$schema": { "type": "string", "format": "uri" },
-    "reportVersion": { "const": "1.0" },
+    "$schema": {
+      "type": "string",
+      "format": "uri"
+    },
+    "reportVersion": {
+      "const": "1.0"
+    },
     "tool": {
       "type": "object",
-      "required": ["name", "version"],
+      "required": [
+        "name",
+        "version"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": { "const": "testmania" },
-        "version": { "type": "string" }
+        "name": {
+          "const": "testmania"
+        },
+        "version": {
+          "type": "string"
+        }
       }
     },
     "run": {
       "type": "object",
-      "required": ["id", "number", "command", "mode", "status", "exitCode", "startedAt", "finishedAt", "durationMs", "runtime"],
+      "required": [
+        "id",
+        "number",
+        "command",
+        "mode",
+        "status",
+        "exitCode",
+        "startedAt",
+        "finishedAt",
+        "durationMs",
+        "runtime"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^run_[0-9]+$" },
-        "number": { "type": "integer", "minimum": 1 },
-        "command": { "type": "string" },
-        "mode": { "enum": ["local"] },
-        "status": { "enum": ["passed", "failed", "error"] },
-        "exitCode": { "type": "integer" },
-        "startedAt": { "type": "string", "format": "date-time" },
-        "finishedAt": { "type": "string", "format": "date-time" },
-        "durationMs": { "$ref": "#/$defs/ms" },
-        "secretsIncluded": { "type": "boolean", "default": false },
+        "id": {
+          "type": "string",
+          "pattern": "^run_[0-9]+$"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "command": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "local"
+          ]
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "error"
+          ]
+        },
+        "exitCode": {
+          "type": "integer"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "durationMs": {
+          "$ref": "#/$defs/ms"
+        },
+        "secretsIncluded": {
+          "type": "boolean",
+          "default": false
+        },
         "runtime": {
           "type": "object",
-          "required": ["engine", "version"],
+          "required": [
+            "engine",
+            "version"
+          ],
           "additionalProperties": false,
           "properties": {
-            "engine": { "enum": ["podman"] },
-            "version": { "type": "string" }
+            "engine": {
+              "enum": [
+                "podman"
+              ]
+            },
+            "version": {
+              "type": "string"
+            }
           }
         }
       }
     },
     "manifest": {
       "type": "object",
-      "required": ["path", "version", "suite"],
+      "required": [
+        "path",
+        "version",
+        "suite"
+      ],
       "additionalProperties": false,
       "properties": {
-        "path": { "type": "string" },
-        "version": { "type": "string" },
-        "suite": { "type": "string" },
-        "envFiles": { "type": "array", "items": { "type": "string" } }
+        "path": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "suite": {
+          "type": "string"
+        },
+        "envFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "summary": {
       "type": "object",
-      "required": ["useCases", "requests", "assertions", "phases"],
+      "required": [
+        "useCases",
+        "requests",
+        "assertions",
+        "phases"
+      ],
       "additionalProperties": false,
       "properties": {
         "useCases": {
           "type": "object",
-          "required": ["total", "passed", "failed", "pending"],
+          "required": [
+            "total",
+            "passed",
+            "failed",
+            "pending"
+          ],
           "additionalProperties": false,
           "properties": {
-            "total": { "$ref": "#/$defs/count" },
-            "passed": { "$ref": "#/$defs/count" },
-            "failed": { "$ref": "#/$defs/count" },
-            "pending": { "$ref": "#/$defs/count" }
+            "total": {
+              "$ref": "#/$defs/count"
+            },
+            "passed": {
+              "$ref": "#/$defs/count"
+            },
+            "failed": {
+              "$ref": "#/$defs/count"
+            },
+            "pending": {
+              "$ref": "#/$defs/count"
+            }
           }
         },
         "requests": {
           "type": "object",
-          "required": ["total", "byProtocol"],
+          "required": [
+            "total",
+            "byProtocol"
+          ],
           "additionalProperties": false,
           "properties": {
-            "total": { "$ref": "#/$defs/count" },
+            "total": {
+              "$ref": "#/$defs/count"
+            },
             "byProtocol": {
               "type": "object",
-              "propertyNames": { "$ref": "#/$defs/protocol" },
-              "additionalProperties": { "$ref": "#/$defs/count" }
+              "propertyNames": {
+                "$ref": "#/$defs/protocol"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/count"
+              }
             }
           }
         },
         "assertions": {
           "type": "object",
-          "required": ["total", "passed", "failed"],
+          "required": [
+            "total",
+            "passed",
+            "failed"
+          ],
           "additionalProperties": false,
           "properties": {
-            "total": { "$ref": "#/$defs/count" },
-            "passed": { "$ref": "#/$defs/count" },
-            "failed": { "$ref": "#/$defs/count" }
+            "total": {
+              "$ref": "#/$defs/count"
+            },
+            "passed": {
+              "$ref": "#/$defs/count"
+            },
+            "failed": {
+              "$ref": "#/$defs/count"
+            }
           }
         },
         "phases": {
           "type": "object",
-          "required": ["provisioningMs", "buildMs", "testsMs", "teardownMs"],
+          "required": [
+            "provisioningMs",
+            "buildMs",
+            "testsMs",
+            "teardownMs"
+          ],
           "additionalProperties": false,
           "properties": {
-            "provisioningMs": { "$ref": "#/$defs/ms" },
-            "buildMs": { "$ref": "#/$defs/ms" },
-            "testsMs": { "$ref": "#/$defs/ms" },
-            "teardownMs": { "$ref": "#/$defs/ms" }
+            "provisioningMs": {
+              "$ref": "#/$defs/ms"
+            },
+            "buildMs": {
+              "$ref": "#/$defs/ms"
+            },
+            "testsMs": {
+              "$ref": "#/$defs/ms"
+            },
+            "teardownMs": {
+              "$ref": "#/$defs/ms"
+            }
           }
         }
       }
     },
-    "useCases": { "type": "array", "items": { "$ref": "#/$defs/useCase" } },
-    "requests": { "type": "array", "items": { "$ref": "#/$defs/request" } },
-    "services": { "type": "array", "items": { "$ref": "#/$defs/service" } },
-    "timeline": { "type": "array", "items": { "$ref": "#/$defs/timelineEvent" } },
+    "useCases": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/useCase"
+      }
+    },
+    "requests": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/request"
+      }
+    },
+    "services": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/service"
+      }
+    },
+    "timeline": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/timelineEvent"
+      }
+    },
     "secrets": {
       "description": "Solo presente con --include-secrets. Mapa secretRef → valor real.",
       "type": "object",
-      "propertyNames": { "pattern": "^sec_[0-9]+$" },
-      "additionalProperties": { "type": "string" }
+      "propertyNames": {
+        "pattern": "^sec_[0-9]+$"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
     }
   },
   "$defs": {
-    "ms": { "type": "number", "minimum": 0 },
-    "count": { "type": "integer", "minimum": 0 },
-    "protocol": { "enum": ["http", "grpc", "graphql", "ws", "sql"] },
-    "useCaseId": { "type": "string", "pattern": "^UC-[0-9]{2,}$" },
-    "requestId": { "type": "integer", "minimum": 1 },
+    "ms": {
+      "type": "number",
+      "minimum": 0
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "protocol": {
+      "enum": [
+        "http",
+        "grpc",
+        "graphql",
+        "ws",
+        "sql"
+      ]
+    },
+    "useCaseId": {
+      "type": "string",
+      "pattern": "^UC-[0-9]{2,}$"
+    },
+    "requestId": {
+      "type": "integer",
+      "minimum": 1
+    },
     "handlerRef": {
       "type": "object",
-      "required": ["file"],
+      "required": [
+        "file"
+      ],
       "additionalProperties": false,
       "properties": {
-        "file": { "type": "string" },
-        "line": { "type": "integer", "minimum": 1 }
+        "file": {
+          "type": "string",
+          "description": "Archivo del handler, o \"agente\" cuando el agente ejecutó el request directamente."
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "annotations": {
       "description": "Pares clave/valor libres definidos por el desarrollador. testmania no los interpreta.",
       "type": "object",
-      "propertyNames": { "pattern": "^[a-z0-9áéíóúñü][a-z0-9áéíóúñü_-]*$", "maxLength": 64 },
-      "additionalProperties": { "type": ["string", "number", "boolean"] }
+      "propertyNames": {
+        "pattern": "^[a-z0-9áéíóúñü][a-z0-9áéíóúñü_-]*$",
+        "maxLength": 64
+      },
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean"
+        ]
+      }
     },
     "header": {
       "type": "object",
-      "required": ["name", "value"],
+      "required": [
+        "name",
+        "value"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string" },
-        "value": { "type": ["string", "null"] },
-        "sensitive": { "type": "boolean", "default": false },
-        "secretRef": { "type": "string", "pattern": "^sec_[0-9]+$" }
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sensitive": {
+          "type": "boolean",
+          "default": false
+        },
+        "secretRef": {
+          "type": "string",
+          "pattern": "^sec_[0-9]+$"
+        }
       },
-      "if": { "properties": { "sensitive": { "const": true } }, "required": ["sensitive"] },
-      "then": { "required": ["secretRef"] }
+      "if": {
+        "properties": {
+          "sensitive": {
+            "const": true
+          }
+        },
+        "required": [
+          "sensitive"
+        ]
+      },
+      "then": {
+        "required": [
+          "secretRef"
+        ]
+      }
     },
     "redaction": {
       "type": "object",
-      "required": ["path", "secretRef"],
+      "required": [
+        "path",
+        "secretRef"
+      ],
       "additionalProperties": false,
       "properties": {
-        "path": { "type": "string", "description": "JSONPath dentro de body.value, p. ej. $.password" },
-        "secretRef": { "type": "string", "pattern": "^sec_[0-9]+$" }
+        "path": {
+          "type": "string",
+          "description": "JSONPath dentro de body.value, p. ej. $.password"
+        },
+        "secretRef": {
+          "type": "string",
+          "pattern": "^sec_[0-9]+$"
+        }
       }
     },
     "body": {
       "type": "object",
-      "required": ["encoding", "value"],
+      "required": [
+        "encoding",
+        "value"
+      ],
       "additionalProperties": false,
       "properties": {
-        "encoding": { "enum": ["none", "json", "text", "protobuf-json", "graphql", "sql"] },
-        "contentType": { "type": "string" },
+        "encoding": {
+          "enum": [
+            "none",
+            "json",
+            "text",
+            "protobuf-json",
+            "graphql",
+            "sql"
+          ]
+        },
+        "contentType": {
+          "type": "string"
+        },
         "value": {},
-        "sizeBytes": { "$ref": "#/$defs/count" },
-        "truncated": { "type": "boolean", "default": false },
-        "redactions": { "type": "array", "items": { "$ref": "#/$defs/redaction" } }
+        "sizeBytes": {
+          "$ref": "#/$defs/count"
+        },
+        "truncated": {
+          "type": "boolean",
+          "default": false
+        },
+        "redactions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/redaction"
+          }
+        }
       }
     },
     "frame": {
       "type": "object",
-      "required": ["direction", "offsetMs", "opcode", "data"],
+      "required": [
+        "direction",
+        "offsetMs",
+        "opcode",
+        "data"
+      ],
       "additionalProperties": false,
       "properties": {
-        "direction": { "enum": ["in", "out"] },
-        "offsetMs": { "$ref": "#/$defs/ms" },
-        "opcode": { "enum": ["text", "binary", "ping", "pong", "close"] },
+        "direction": {
+          "enum": [
+            "in",
+            "out"
+          ]
+        },
+        "offsetMs": {
+          "$ref": "#/$defs/ms"
+        },
+        "opcode": {
+          "enum": [
+            "text",
+            "binary",
+            "ping",
+            "pong",
+            "close"
+          ]
+        },
         "data": {}
       }
     },
     "status": {
       "type": "object",
-      "required": ["kind", "label"],
-      "properties": { "kind": { "$ref": "#/$defs/protocol" }, "label": { "type": "string" } },
+      "required": [
+        "kind",
+        "label"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/protocol"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
       "oneOf": [
         {
           "properties": {
-            "kind": { "const": "http" },
-            "label": { "type": "string" },
-            "code": { "type": "integer", "minimum": 100, "maximum": 599 },
-            "reason": { "type": "string" }
+            "kind": {
+              "const": "http"
+            },
+            "label": {
+              "type": "string"
+            },
+            "code": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 599
+            },
+            "reason": {
+              "type": "string"
+            }
           },
-          "required": ["code"],
+          "required": [
+            "code"
+          ],
           "additionalProperties": false
         },
         {
           "properties": {
-            "kind": { "const": "grpc" },
-            "label": { "type": "string" },
-            "code": { "type": "integer", "minimum": 0, "maximum": 16 },
-            "name": { "type": "string" },
-            "message": { "type": "string" }
+            "kind": {
+              "const": "grpc"
+            },
+            "label": {
+              "type": "string"
+            },
+            "code": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16
+            },
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
           },
-          "required": ["code", "name"],
+          "required": [
+            "code",
+            "name"
+          ],
           "additionalProperties": false
         },
         {
           "properties": {
-            "kind": { "const": "graphql" },
-            "label": { "type": "string" },
-            "httpCode": { "type": "integer" },
-            "hasData": { "type": "boolean" },
-            "errorCount": { "$ref": "#/$defs/count" }
+            "kind": {
+              "const": "graphql"
+            },
+            "label": {
+              "type": "string"
+            },
+            "httpCode": {
+              "type": "integer"
+            },
+            "hasData": {
+              "type": "boolean"
+            },
+            "errorCount": {
+              "$ref": "#/$defs/count"
+            }
           },
-          "required": ["httpCode", "hasData", "errorCount"],
+          "required": [
+            "httpCode",
+            "hasData",
+            "errorCount"
+          ],
           "additionalProperties": false
         },
         {
           "properties": {
-            "kind": { "const": "ws" },
-            "label": { "type": "string" },
-            "event": { "enum": ["handshake", "frame", "close"] },
-            "httpCode": { "type": "integer" },
-            "closeCode": { "type": "integer" }
+            "kind": {
+              "const": "ws"
+            },
+            "label": {
+              "type": "string"
+            },
+            "event": {
+              "enum": [
+                "handshake",
+                "frame",
+                "close"
+              ]
+            },
+            "httpCode": {
+              "type": "integer"
+            },
+            "closeCode": {
+              "type": "integer"
+            }
           },
-          "required": ["event"],
+          "required": [
+            "event"
+          ],
           "additionalProperties": false
         },
         {
           "properties": {
-            "kind": { "const": "sql" },
-            "label": { "type": "string" },
-            "command": { "type": "string" },
-            "rowCount": { "$ref": "#/$defs/count" }
+            "kind": {
+              "const": "sql"
+            },
+            "label": {
+              "type": "string"
+            },
+            "command": {
+              "type": "string"
+            },
+            "rowCount": {
+              "$ref": "#/$defs/count"
+            }
           },
-          "required": ["command", "rowCount"],
+          "required": [
+            "command",
+            "rowCount"
+          ],
           "additionalProperties": false
         }
       ]
     },
     "assertion": {
       "type": "object",
-      "required": ["id", "expression", "passed"],
+      "required": [
+        "id",
+        "expression",
+        "passed"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string" },
-        "expression": { "type": "string" },
-        "passed": { "type": "boolean" },
-        "expectedFailure": { "type": "boolean", "default": false, "description": "La prueba esperaba un estado de error (403, 429, FAILED_PRECONDITION…)." },
+        "id": {
+          "type": "string"
+        },
+        "expression": {
+          "type": "string"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "expectedFailure": {
+          "type": "boolean",
+          "default": false,
+          "description": "La prueba esperaba un estado de error (403, 429, FAILED_PRECONDITION…)."
+        },
         "expected": {},
         "actual": {}
       }
     },
     "useCase": {
       "type": "object",
-      "required": ["id", "title", "status", "given", "when", "then", "handler", "requestIds", "invocations"],
+      "required": [
+        "id",
+        "title",
+        "status",
+        "given",
+        "when",
+        "then",
+        "handler",
+        "requestIds",
+        "invocations"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/useCaseId" },
-        "title": { "type": "string" },
-        "status": { "enum": ["passed", "failed", "pending"] },
-        "given": { "type": "string" },
-        "when": { "type": "string" },
-        "then": { "type": "string" },
-        "handler": { "$ref": "#/$defs/handlerRef" },
-        "startOffsetMs": { "$ref": "#/$defs/ms" },
-        "durationMs": { "$ref": "#/$defs/ms" },
-        "requestIds": { "type": "array", "items": { "$ref": "#/$defs/requestId" } },
+        "id": {
+          "$ref": "#/$defs/useCaseId"
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "pending"
+          ]
+        },
+        "given": {
+          "type": "string"
+        },
+        "when": {
+          "type": "string"
+        },
+        "then": {
+          "type": "string"
+        },
+        "handler": {
+          "$ref": "#/$defs/handlerRef"
+        },
+        "startOffsetMs": {
+          "$ref": "#/$defs/ms"
+        },
+        "durationMs": {
+          "$ref": "#/$defs/ms"
+        },
+        "requestIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestId"
+          }
+        },
         "invocations": {
           "description": "Inventario de URLs y métodos invocados tal cual, sin templates. Se agrupan solo llamadas idénticas.",
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["protocol", "method", "target", "count"],
+            "required": [
+              "protocol",
+              "method",
+              "target",
+              "count"
+            ],
             "additionalProperties": false,
             "properties": {
-              "protocol": { "$ref": "#/$defs/protocol" },
-              "method": { "type": "string" },
-              "target": { "type": "string" },
-              "count": { "type": "integer", "minimum": 1 }
+              "protocol": {
+                "$ref": "#/$defs/protocol"
+              },
+              "method": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              }
             }
           }
         },
         "failure": {
           "type": "object",
-          "required": ["explanation", "requestIds", "assertionIds"],
+          "required": [
+            "explanation",
+            "requestIds",
+            "assertionIds"
+          ],
           "additionalProperties": false,
           "properties": {
-            "explanation": { "type": "string", "description": "Texto determinista generado desde las aserciones, sin IA." },
-            "requestIds": { "type": "array", "items": { "$ref": "#/$defs/requestId" }, "minItems": 1 },
-            "assertionIds": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+            "explanation": {
+              "type": "string",
+              "description": "Texto determinista generado desde las aserciones, sin IA."
+            },
+            "requestIds": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/requestId"
+              },
+              "minItems": 1
+            },
+            "assertionIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            }
           }
         },
         "pending": {
           "type": "object",
-          "required": ["reason"],
+          "required": [
+            "reason"
+          ],
           "additionalProperties": false,
-          "properties": { "reason": { "enum": ["handler-not-implemented", "skipped"] }, "message": { "type": "string" } }
+          "properties": {
+            "reason": {
+              "enum": [
+                "handler-not-implemented",
+                "skipped"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
         }
       },
       "allOf": [
-        { "if": { "properties": { "status": { "const": "failed" } } }, "then": { "required": ["failure"] } },
-        { "if": { "properties": { "status": { "const": "pending" } } }, "then": { "required": ["pending"] } }
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "failure"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "pending"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "pending"
+            ]
+          }
+        }
       ]
     },
     "request": {
       "type": "object",
-      "required": ["id", "useCaseId", "protocol", "method", "target", "url", "services", "startOffsetMs", "durationMs", "passed", "handler", "annotations", "request", "response", "assertions"],
+      "required": [
+        "id",
+        "useCaseId",
+        "protocol",
+        "method",
+        "target",
+        "url",
+        "services",
+        "startOffsetMs",
+        "durationMs",
+        "passed",
+        "handler",
+        "annotations",
+        "request",
+        "response",
+        "assertions"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/requestId" },
-        "useCaseId": { "$ref": "#/$defs/useCaseId" },
-        "protocol": { "$ref": "#/$defs/protocol" },
-        "transport": { "type": "string", "description": "Detalle legible: HTTP/1.1, HTTP/2 unary, events.v1…" },
-        "method": { "type": "string", "description": "Verbo HTTP, método gRPC, QUERY/MUTATION, CONNECT/MESSAGE o comando SQL." },
-        "target": { "type": "string", "description": "Ruta, método completo gRPC, operationName o sentencia resumida, tal cual se invocó." },
-        "url": { "type": "string" },
-        "services": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-        "startOffsetMs": { "$ref": "#/$defs/ms" },
-        "durationMs": { "$ref": "#/$defs/ms" },
-        "open": { "type": "boolean", "default": false, "description": "Conexión que siguió abierta (WebSocket)." },
-        "parentRequestId": { "$ref": "#/$defs/requestId", "description": "Para frames WS: la conexión que los recibió." },
-        "passed": { "type": "boolean" },
-        "handler": { "$ref": "#/$defs/handlerRef" },
-        "annotations": { "$ref": "#/$defs/annotations" },
+        "id": {
+          "$ref": "#/$defs/requestId"
+        },
+        "useCaseId": {
+          "$ref": "#/$defs/useCaseId"
+        },
+        "protocol": {
+          "$ref": "#/$defs/protocol"
+        },
+        "transport": {
+          "type": "string",
+          "description": "Detalle legible: HTTP/1.1, HTTP/2 unary, events.v1…"
+        },
+        "method": {
+          "type": "string",
+          "description": "Verbo HTTP, método gRPC, QUERY/MUTATION, CONNECT/MESSAGE o comando SQL."
+        },
+        "target": {
+          "type": "string",
+          "description": "Ruta, método completo gRPC, operationName o sentencia resumida, tal cual se invocó."
+        },
+        "url": {
+          "type": "string"
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "startOffsetMs": {
+          "$ref": "#/$defs/ms"
+        },
+        "durationMs": {
+          "$ref": "#/$defs/ms"
+        },
+        "open": {
+          "type": "boolean",
+          "default": false,
+          "description": "Conexión que siguió abierta (WebSocket)."
+        },
+        "parentRequestId": {
+          "$ref": "#/$defs/requestId",
+          "description": "Para frames WS: la conexión que los recibió."
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "handler": {
+          "$ref": "#/$defs/handlerRef"
+        },
+        "annotations": {
+          "$ref": "#/$defs/annotations"
+        },
         "request": {
           "type": "object",
-          "required": ["headers", "body"],
+          "required": [
+            "headers",
+            "body"
+          ],
           "additionalProperties": false,
           "properties": {
-            "headers": { "type": "array", "items": { "$ref": "#/$defs/header" } },
-            "body": { "$ref": "#/$defs/body" }
+            "headers": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/header"
+              }
+            },
+            "body": {
+              "$ref": "#/$defs/body"
+            }
           }
         },
         "response": {
           "type": "object",
-          "required": ["status", "headers", "body"],
+          "required": [
+            "status",
+            "headers",
+            "body"
+          ],
           "additionalProperties": false,
           "properties": {
-            "status": { "$ref": "#/$defs/status" },
-            "headers": { "type": "array", "items": { "$ref": "#/$defs/header" } },
-            "trailers": { "type": "array", "items": { "$ref": "#/$defs/header" } },
-            "body": { "$ref": "#/$defs/body" },
-            "frames": { "type": "array", "items": { "$ref": "#/$defs/frame" } },
-            "sizeBytes": { "$ref": "#/$defs/count" }
+            "status": {
+              "$ref": "#/$defs/status"
+            },
+            "headers": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/header"
+              }
+            },
+            "trailers": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/header"
+              }
+            },
+            "body": {
+              "$ref": "#/$defs/body"
+            },
+            "frames": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/frame"
+              }
+            },
+            "sizeBytes": {
+              "$ref": "#/$defs/count"
+            }
           }
         },
-        "assertions": { "type": "array", "items": { "$ref": "#/$defs/assertion" } },
+        "assertions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/assertion"
+          }
+        },
         "reproduce": {
           "type": "object",
-          "required": ["tool", "command"],
+          "required": [
+            "tool",
+            "command"
+          ],
           "additionalProperties": false,
           "properties": {
-            "tool": { "enum": ["curl", "grpcurl", "websocat", "psql", "none"] },
-            "command": { "type": "string" },
-            "env": { "type": "array", "items": { "type": "string" }, "description": "Variables que reemplazan secretos: TOKEN, SERVICE_TOKEN…" }
+            "tool": {
+              "enum": [
+                "curl",
+                "grpcurl",
+                "websocat",
+                "psql",
+                "none"
+              ]
+            },
+            "command": {
+              "type": "string"
+            },
+            "env": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Variables que reemplazan secretos: TOKEN, SERVICE_TOKEN…"
+            }
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "required": [
+            "source"
+          ],
+          "additionalProperties": false,
+          "description": "De dónde sale la evidencia del request.",
+          "properties": {
+            "source": {
+              "enum": [
+                "proxy",
+                "agent",
+                "runner"
+              ]
+            },
+            "file": {
+              "type": "string",
+              "description": "Archivo de evidencia, relativo al reporte (por ejemplo evidence/api.har)."
+            },
+            "entry": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Índice de la entrada dentro del archivo."
+            }
           }
         }
       }
     },
     "artifact": {
       "type": "object",
-      "required": ["kind", "source", "startOffsetMs", "durationMs", "status"],
+      "required": [
+        "kind",
+        "source",
+        "startOffsetMs",
+        "durationMs",
+        "status"
+      ],
       "additionalProperties": false,
       "properties": {
-        "kind": { "enum": ["migration", "seed", "proto", "stub", "file"] },
-        "source": { "type": "string" },
-        "description": { "type": "string" },
-        "items": { "$ref": "#/$defs/count" },
-        "startOffsetMs": { "$ref": "#/$defs/ms" },
-        "durationMs": { "$ref": "#/$defs/ms" },
-        "status": { "enum": ["applied", "failed", "skipped"] }
+        "kind": {
+          "enum": [
+            "migration",
+            "seed",
+            "proto",
+            "stub",
+            "file"
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "items": {
+          "$ref": "#/$defs/count"
+        },
+        "startOffsetMs": {
+          "$ref": "#/$defs/ms"
+        },
+        "durationMs": {
+          "$ref": "#/$defs/ms"
+        },
+        "status": {
+          "enum": [
+            "applied",
+            "failed",
+            "skipped"
+          ]
+        }
       }
     },
     "service": {
       "type": "object",
-      "required": ["name", "mode", "endpoint", "health", "requestCount"],
+      "required": [
+        "name",
+        "mode",
+        "endpoint",
+        "health",
+        "requestCount"
+      ],
       "properties": {
-        "name": { "type": "string" },
-        "mode": { "enum": ["provisioned", "connected"] },
-        "endpoint": { "type": "string" },
+        "name": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "provisioned",
+            "connected"
+          ]
+        },
+        "endpoint": {
+          "type": "string"
+        },
         "health": {
           "type": "object",
-          "required": ["check", "status", "durationMs"],
+          "required": [
+            "check",
+            "status",
+            "durationMs"
+          ],
           "additionalProperties": false,
           "properties": {
-            "check": { "type": "string" },
-            "status": { "enum": ["healthy", "unhealthy", "timeout"] },
-            "durationMs": { "$ref": "#/$defs/ms" }
+            "check": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "healthy",
+                "unhealthy",
+                "timeout"
+              ]
+            },
+            "durationMs": {
+              "$ref": "#/$defs/ms"
+            }
           }
         },
-        "requestCount": { "$ref": "#/$defs/count" }
+        "requestCount": {
+          "$ref": "#/$defs/count"
+        }
       },
       "oneOf": [
         {
           "properties": {
-            "name": true, "endpoint": true, "health": true, "requestCount": true,
-            "mode": { "const": "provisioned" },
-            "image": { "type": "string" },
+            "name": true,
+            "endpoint": true,
+            "health": true,
+            "requestCount": true,
+            "mode": {
+              "const": "provisioned"
+            },
+            "image": {
+              "type": "string"
+            },
             "ports": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["host", "container"],
+                "required": [
+                  "host",
+                  "container"
+                ],
                 "additionalProperties": false,
-                "properties": { "host": { "type": "integer" }, "container": { "type": "integer" }, "protocol": { "type": "string" } }
+                "properties": {
+                  "host": {
+                    "type": "integer"
+                  },
+                  "container": {
+                    "type": "integer"
+                  },
+                  "protocol": {
+                    "type": "string"
+                  }
+                }
               }
             },
             "env": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["name", "source"],
+                "required": [
+                  "name",
+                  "source"
+                ],
                 "additionalProperties": false,
                 "properties": {
-                  "name": { "type": "string" },
-                  "source": { "enum": ["manifest", "env-file", "inferred", "service-ref"] },
-                  "value": { "type": "string" },
-                  "sensitive": { "type": "boolean" },
-                  "secretRef": { "type": "string", "pattern": "^sec_[0-9]+$" }
+                  "name": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "enum": [
+                      "manifest",
+                      "env-file",
+                      "inferred",
+                      "service-ref"
+                    ]
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "sensitive": {
+                    "type": "boolean"
+                  },
+                  "secretRef": {
+                    "type": "string",
+                    "pattern": "^sec_[0-9]+$"
+                  }
                 }
               }
             },
-            "dependsOn": { "type": "array", "items": { "type": "string" } },
-            "storage": { "enum": ["tmpfs", "volume", "none"] },
-            "readyMs": { "$ref": "#/$defs/ms" },
-            "artifacts": { "type": "array", "items": { "$ref": "#/$defs/artifact" } }
+            "dependsOn": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "storage": {
+              "enum": [
+                "tmpfs",
+                "volume",
+                "none"
+              ]
+            },
+            "readyMs": {
+              "$ref": "#/$defs/ms"
+            },
+            "artifacts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/artifact"
+              }
+            }
           },
-          "required": ["image", "artifacts"],
+          "required": [
+            "image",
+            "artifacts"
+          ],
           "additionalProperties": false
         },
         {
           "properties": {
-            "name": true, "endpoint": true, "health": true, "requestCount": true,
-            "mode": { "const": "connected" },
-            "host": { "type": "string" },
-            "version": { "type": "string" },
+            "name": true,
+            "endpoint": true,
+            "health": true,
+            "requestCount": true,
+            "mode": {
+              "const": "connected"
+            },
+            "host": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
             "tls": {
               "type": "object",
-              "required": ["version", "validUntil"],
+              "required": [
+                "version",
+                "validUntil"
+              ],
               "additionalProperties": false,
-              "properties": { "version": { "type": "string" }, "validUntil": { "type": "string", "format": "date" } }
+              "properties": {
+                "version": {
+                  "type": "string"
+                },
+                "validUntil": {
+                  "type": "string",
+                  "format": "date"
+                }
+              }
+            },
+            "proxy": {
+              "type": "object",
+              "required": [
+                "image",
+                "listen",
+                "upstream"
+              ],
+              "additionalProperties": false,
+              "description": "Contenedor proxy que captura la evidencia de los requests hacia este servicio.",
+              "properties": {
+                "engine": {
+                  "enum": [
+                    "podman",
+                    "docker"
+                  ],
+                  "default": "podman"
+                },
+                "image": {
+                  "type": "string"
+                },
+                "container": {
+                  "type": "string"
+                },
+                "listen": {
+                  "type": "string",
+                  "description": "Dirección local a la que se envían los requests, por ejemplo http://localhost:18080."
+                },
+                "upstream": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "string",
+                  "description": "Archivo de evidencia que escribe el proxy, relativo al reporte."
+                }
+              }
             }
           },
-          "required": ["host"],
+          "required": [
+            "host"
+          ],
           "additionalProperties": false
         }
       ]
     },
     "timelineEvent": {
       "type": "object",
-      "required": ["kind", "label", "startOffsetMs", "durationMs"],
+      "required": [
+        "kind",
+        "label",
+        "startOffsetMs",
+        "durationMs"
+      ],
       "additionalProperties": false,
       "properties": {
-        "kind": { "enum": ["request", "service.up", "artifact.apply", "service.check", "build", "teardown"] },
-        "label": { "type": "string" },
-        "ref": { "type": ["string", "integer"], "description": "requestId, nombre del servicio o source del artefacto." },
-        "useCaseId": { "$ref": "#/$defs/useCaseId" },
-        "startOffsetMs": { "$ref": "#/$defs/ms" },
-        "durationMs": { "$ref": "#/$defs/ms" }
+        "kind": {
+          "enum": [
+            "request",
+            "service.up",
+            "artifact.apply",
+            "service.check",
+            "build",
+            "teardown"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "ref": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "requestId, nombre del servicio o source del artefacto."
+        },
+        "useCaseId": {
+          "$ref": "#/$defs/useCaseId"
+        },
+        "startOffsetMs": {
+          "$ref": "#/$defs/ms"
+        },
+        "durationMs": {
+          "$ref": "#/$defs/ms"
+        }
       }
     }
   }

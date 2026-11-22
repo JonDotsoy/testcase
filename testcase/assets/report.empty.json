@@ -1,0 +1,56 @@
+{
+  "$schema": "https://testmania.dev/schemas/report/1.0.json",
+  "reportVersion": "1.0",
+  "tool": {
+    "name": "testmania",
+    "version": "1.0.0"
+  },
+  "run": {
+    "id": "run_1",
+    "number": 1,
+    "command": "testcase (agente)",
+    "mode": "local",
+    "status": "passed",
+    "exitCode": 0,
+    "startedAt": "2026-01-01T00:00:00.000Z",
+    "finishedAt": "2026-01-01T00:00:00.000Z",
+    "durationMs": 0,
+    "secretsIncluded": false,
+    "runtime": {
+      "engine": "podman",
+      "version": "5.2.1"
+    }
+  },
+  "manifest": {
+    "path": ".testcase/report.json",
+    "version": "1.0",
+    "suite": "mi-sistema"
+  },
+  "summary": {
+    "useCases": {
+      "total": 0,
+      "passed": 0,
+      "failed": 0,
+      "pending": 0
+    },
+    "requests": {
+      "total": 0,
+      "byProtocol": {}
+    },
+    "assertions": {
+      "total": 0,
+      "passed": 0,
+      "failed": 0
+    },
+    "phases": {
+      "provisioningMs": 0,
+      "buildMs": 0,
+      "testsMs": 0,
+      "teardownMs": 0
+    }
+  },
+  "useCases": [],
+  "requests": [],
+  "services": [],
+  "timeline": []
+}
