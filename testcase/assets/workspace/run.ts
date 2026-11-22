@@ -24,7 +24,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { CaseAbort, createContext, declaredServices, type CaseDefinition, type RecordedCheck, type RecordedNotation, type ServiceDefinition, type ServiceTarget } from "./testcase.ts";
+import { CaseAbort, createContext, declaredServices, maskSensitive, sensitiveValues, type CaseDefinition, type RecordedCheck, type RecordedNotation, type ServiceDefinition, type ServiceTarget } from "./testcase.ts";
 
 const args = process.argv.slice(2);
 const opt = (name: string) => {
@@ -342,14 +342,25 @@ for (const { def, file } of defs) {
     await close();
   }
   const uc = report.useCases.find((u: any) => u.id === def.id);
-  if (error && !requestTags.length) uc.pending = { reason: "skipped", message: error };
+  if (error && !requestTags.length) uc.pending = { reason: "skipped", message: maskSensitive(error) };
   results.push({ id: def.id, file, durationMs: Date.now() - t0, error, requestTags, checks, notations });
   const failed = checks.filter((c) => !c.passed).length;
-  console.log(`${def.id} ${def.title}: ${checks.length - failed}/${checks.length} aserciones ok${error ? " · " + error : ""}`);
+  console.log(`${def.id} ${def.title}: ${checks.length - failed}/${checks.length} aserciones ok${error ? " · " + maskSensitive(error) : ""}`);
 }
 await browser?.close();
 
+// Los valores sensibles no salen en claro en las aserciones ni en las anotaciones.
+const maskDeep = (v: unknown): any =>
+  typeof v === "string" ? maskSensitive(v) : Array.isArray(v) ? v.map(maskDeep) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, maskDeep(x)])) : v;
+for (const r of results) {
+  r.checks = maskDeep(r.checks);
+  r.notations = maskDeep(r.notations);
+  if (r.error) r.error = maskSensitive(r.error);
+}
 writeFileSync(join(reportDir, "run-assertions.json"), JSON.stringify({ runId: report.run.id, startedAt: report.run.startedAt, finishedAt: new Date().toISOString(), cases: results }, null, 2) + "\n");
+// import-har.ts lee este archivo para ofuscar esos valores en la evidencia. Bórralo al terminar.
+const sensitiveFile = join(reportDir, "run-sensitive.json");
+writeFileSync(sensitiveFile, JSON.stringify({ runId: report.run.id, values: sensitiveValues() }) + "\n", { mode: 0o600 });
 writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
 console.log(`\nCorrida ${report.run.id} lista. Ahora: detén los proxies, importa los HAR (import-har.ts), sincroniza y genera el HTML.`);
 console.log(`Aserciones en ${join(reportDir, "run-assertions.json")} · scripts copiados a ${join(reportDir, "cases")}/ (${basename(casesDir)})`);

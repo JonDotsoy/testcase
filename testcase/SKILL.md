@@ -57,7 +57,7 @@ Si ya hay scripts en `.testcase/cases/` de una corrida anterior, cópialos a `$W
 Un archivo por caso en `$WS/cases/UC-NN.case.ts`. **Cada script es autocontenido**: importa desde `testcase.ts` todo lo que usa y declara con `defineService` los servicios que necesita. Así, el script basta para saber qué se prueba, contra qué y cómo.
 
 ```ts
-import { defineCase, defineService, fromEnv, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";
+import { defineCase, defineService, fromEnv, sensitive, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";
 
 // Servicio URL que ya existe: sus requests pasan por el proxy de evidencia.
 const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
@@ -79,9 +79,10 @@ export default defineCase(() => {
 
   given("un pedido creado por María", async () => {
     notation("usuario", "pedro@acme.test");          // antes del request: la lleva el request que sigue
-    const login = await api.post("/v1/auth/token", { data: { email: "pedro@acme.test", password: process.env.PEDRO_PASSWORD } });
+    const password = sensitive(process.env.PEDRO_PASSWORD); // en el reporte queda como ••••
+    const login = await api.post("/v1/auth/token", { data: { email: "pedro@acme.test", password } });
     ensure("status == 200", login.status(), 200);
-    vars.token = login.body.access_token;             // body ya viene parseado
+    vars.token = sensitive(login.body.access_token);  // body ya viene parseado
     notation("rol", login.body.user.role);            // después del request: se une a ese request
   });
 
@@ -113,7 +114,8 @@ La API completa:
 | `given(texto, fn?)` · `when(…)` · `then(…)` | Pasos. Se ejecutan en el orden en que se escriben. `fn` es opcional: `given("un pedido de María")` deja el paso solo como texto. |
 | `defineService({ name, endpoint, … })` | Servicio URL que ya existe (`connected`). Campos: `endpoint`, `version?`, `health?`. |
 | `defineService({ name, image \| build, … })` | Contenedor (`provisioned`). Campos: `image` o `build` (texto con el contexto, o `{ context, dockerfile?, args?, target? }`; rutas relativas a la raíz del proyecto), `command?`, `tmpfs?` (rutas en memoria), `ports?` (`{ container, host? }`; sin `host` se asigna uno desde 55000), `env?`, `dependsOn?` (nombres o servicios), `storage?`, `artifacts?` (`{ kind, source, description? }`), `health?`, `http?` (si habla HTTP, va por proxy). |
-| `fromEnv("VAR")` | Valor de `env` que sale del entorno del host. Queda enmascarado en el reporte. |
+| `fromEnv("VAR")` | Valor de `env` que sale del entorno del host. Queda enmascarado en el reporte, y si la variable existe al correr, su valor se ofusca como con `sensitive`. |
+| `sensitive(valor)` | Declara un valor o texto sensible y lo devuelve tal cual: `const password = sensitive(process.env.PEDRO_PASSWORD)`. El caso usa el valor real; en el reporte y en el HTML queda como `••••` donde aparezca (URL, headers, bodies, anotaciones, aserciones). Va en el módulo, en `defineCase` o en un paso, por ejemplo `sensitive(login.body.access_token)`. Valores de menos de 4 caracteres no se registran. |
 | `servicio.get/post/put/patch/delete/fetch(ruta, opts)` | Request HTTP (Playwright) por el proxy del servicio, con `data`, `form`, `params`, `headers`. Devuelve `body` (el JSON ya parseado, o el texto), `status()` y `headers()`. |
 | `servicio.url(ruta)` | URL del servicio por el proxy, para `page().goto()`. |
 | `notation(nombre, valor, { response? })` | Define una anotación y devuelve el valor: `const timeAlive = notation("time alive", res.body.timeAlive)`. En el cuerpo de `defineCase` es de todo el caso. En un paso, antes de un request, la llevan los requests que siguen en ese paso. Después de un request, se une a ese request. |
@@ -205,7 +207,7 @@ Entrega `.testcase/report.html` a la persona y resume en pocas frases:
 - Cuántos casos pasaron, fallaron o quedaron pendientes.
 - Para cada fallo: el caso por título e id, qué se esperaba y qué llegó, y si parece un bug del servicio o un error del caso.
 
-Al terminar, borra el espacio de trabajo temporal (`rm -rf "$WS"`). Los scripts quedan en `.testcase/cases/`.
+Al terminar, borra el espacio de trabajo temporal (`rm -rf "$WS"`) y `.testcase/run-sensitive.json`. Los scripts quedan en `.testcase/cases/`.
 
 ## Cambios posteriores
 
@@ -230,6 +232,7 @@ Las claves van en minúsculas (se permiten tildes, ñ y espacios), con `-` o `_`
 
 ## Secretos
 
+- Declara con `sensitive()` todo valor sensible que use un caso: contraseñas, tokens que recibe, llaves, datos personales que no deben verse. `run.ts` los ofusca en `run-assertions.json` y los deja en `.testcase/run-sensitive.json` (permisos 600) para que `import-har.ts` los ofusque en la evidencia importada. El HAR crudo de `evidence/` sí los trae: no lo compartas.
 - Todo header, variable o campo de body con un token, contraseña, cookie o llave va enmascarado (`"••••"`, `"Bearer ••••"`) con `sensitive: true` y un `secretRef` (`sec_1`, `sec_2`…). En los bodies, usa `redactions` con el JSONPath del campo.
 - Por defecto **no** escribas el mapa `secrets`. Agrégalo solo si la persona pide ver los valores sensibles en el reporte. En ese caso el HTML muestra el botón "Mostrar valores sensibles".
 - Para generar una copia sin secretos de un reporte que sí los trae: `render-report.ts … --strip-secrets`.

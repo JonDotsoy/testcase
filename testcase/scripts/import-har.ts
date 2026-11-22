@@ -93,14 +93,28 @@ function secretRef(value: string): string {
   return ref;
 }
 
+// Valores declarados con sensitive() en los casos (run-sensitive.json, de la misma corrida).
+let sensitiveList: string[] = [];
+try {
+  const rs = JSON.parse(readFileSync(resolve(dirname(reportPath), "run-sensitive.json"), "utf8"));
+  if (rs.runId === report.run.id) sensitiveList = (rs.values as string[]).filter((v) => v.length >= 4).sort((a, b) => b.length - a.length);
+} catch {
+  /* sin valores sensibles declarados */
+}
+const hasSensitive = (t: string) => sensitiveList.some((v) => t.includes(v));
+const maskText = (t: string) => sensitiveList.reduce((acc, v) => acc.split(v).join("••••"), t);
+
 function maskHeader(name: string, value: string) {
-  if (!SENSITIVE_HEADERS.has(name)) return { name, value };
+  if (!SENSITIVE_HEADERS.has(name)) {
+    if (typeof value === "string" && hasSensitive(value)) return { name, value: maskText(value), sensitive: true, secretRef: secretRef(value) };
+    return { name, value };
+  }
   const masked = /^bearer /i.test(value) ? "Bearer ••••" : name === "set-cookie" ? value.replace(/=([^;]*)/, "=••••") : "••••";
   return { name, value: masked, sensitive: true, secretRef: secretRef(value) };
 }
 
 function redact(value: Json, path = "$", out: Json[] = []): Json {
-  if (Array.isArray(value)) return value.map((v, i) => redact(v, `${path}[${i}]`, out));
+  if (Array.isArray(value)) return value.map((v, i) => redact(v, `${path}.${i}`, out));
   if (value && typeof value === "object") {
     const o: Json = {};
     for (const [k, v] of Object.entries(value)) {
@@ -110,6 +124,10 @@ function redact(value: Json, path = "$", out: Json[] = []): Json {
       } else o[k] = redact(v, `${path}.${k}`, out);
     }
     return o;
+  }
+  if (typeof value === "string" && hasSensitive(value)) {
+    out.push({ path, secretRef: secretRef(value) });
+    return maskText(value);
   }
   return value;
 }
@@ -126,6 +144,7 @@ function parseBody(text: string | undefined, mime: string | undefined, encoding?
       /* cae a texto */
     }
   }
+  if (hasSensitive(raw)) return { encoding: "text", contentType: mime, value: maskText(raw), redactions: [{ path: "$", secretRef: secretRef(raw) }] };
   return { encoding: "text", contentType: mime, value: raw };
 }
 
@@ -169,11 +188,13 @@ const skipped: string[] = [];
   if (STATIC_MIME.test(e.response.content?.mimeType ?? "") || STATIC_EXT.test(new URL(e.request.url).pathname)) return void skipped.push(`entrada ${index}: archivo estático`);
   const requestTag = reqHeaders.find((h) => h.name === "x-testcase-request")?.value;
   const stepTag = reqHeaders.find((h) => h.name === "x-testcase-step")?.value;
-  const annotations = parseAnnotations(reqHeaders.find((h) => h.name === "x-testcase-annotations")?.value);
+  const annotations = Object.fromEntries(
+    Object.entries(parseAnnotations(reqHeaders.find((h) => h.name === "x-testcase-annotations")?.value)).map(([k, v]) => [k, typeof v === "string" ? maskText(v) : v]),
+  );
 
   const proxied = new URL(e.request.url);
-  const target = proxied.pathname + proxied.search;
-  const url = new URL(target, upstream).toString();
+  const target = maskText(proxied.pathname + proxied.search);
+  const url = maskText(new URL(proxied.pathname + proxied.search, upstream).toString());
   const reqBody = parseBody(e.request.postData?.text, e.request.postData?.mimeType);
   const resBody = parseBody(e.response.content?.text, e.response.content?.mimeType, e.response.content?.encoding);
 
@@ -196,7 +217,7 @@ const skipped: string[] = [];
   const curlHeaders = headersOut
     .filter((h) => !["content-length", "accept-encoding", "user-agent", "connection"].includes(h.name))
     .map((h) => `  -H '${h.name}: ${h.sensitive ? (/^bearer /i.test(h.value) ? "Bearer $TOKEN" : "$SECRET") : h.value}'`);
-  const curlBody = e.request.postData?.text ? ` \\\n  -d '${JSON.stringify(reqBody.value).replace(/'/g, "'\\''")}'` : "";
+  const curlBody = e.request.postData?.text ? ` \\\n  -d '${maskText(typeof reqBody.value === "string" ? reqBody.value : JSON.stringify(reqBody.value)).replace(/'/g, "'\\''")}'` : "";
 
   const record: Json = {
     id: nextId++,

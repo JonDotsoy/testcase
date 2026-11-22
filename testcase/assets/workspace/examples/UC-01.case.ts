@@ -1,6 +1,6 @@
 // Ejemplo: copia este archivo a cases/ y ajústalo. Un archivo por caso de uso; el id sale del nombre (UC-01).
 // El script es autocontenido: importa lo que usa y declara sus servicios.
-import { defineCase, defineService, fromEnv, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";
+import { defineCase, defineService, fromEnv, sensitive, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";
 
 // Servicio URL que ya existe: sus requests pasan por el proxy de evidencia.
 const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
@@ -39,11 +39,10 @@ export default defineCase(() => {
   given("un pedido creado por María", async () => {
     notation("usuario", "pedro@acme.test"); // antes del request: la lleva el request que sigue
     notation("perfil", "cliente");
-    const login = await api.post("/v1/auth/token", {
-      data: { email: "pedro@acme.test", password: process.env.PEDRO_PASSWORD ?? "" },
-    });
+    const password = sensitive(process.env.PEDRO_PASSWORD ?? ""); // en el reporte queda como ••••
+    const login = await api.post("/v1/auth/token", { data: { email: "pedro@acme.test", password } });
     ensure("status == 200", login.status(), 200);
-    vars.token = login.body.access_token;
+    vars.token = sensitive(login.body.access_token);
     notation("rol", login.body.user.role); // después del request: se une a ese request
   });
 

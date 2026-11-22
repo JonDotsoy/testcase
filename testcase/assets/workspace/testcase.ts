@@ -214,6 +214,7 @@ export interface FromEnv {
 }
 /** Lee el valor de una variable de entorno del host al levantar el servicio. Se marca como sensible. */
 export function fromEnv(name: string): FromEnv {
+  sensitive(process.env[name]);
   return { fromEnv: name };
 }
 
@@ -314,6 +315,40 @@ function normalizeDef(def: ServiceDefinition): unknown {
   const d: any = { ...def };
   if (Array.isArray(d.dependsOn)) d.dependsOn = d.dependsOn.map((x: any) => (typeof x === "string" ? x : x.name));
   return d;
+}
+
+/* ---------- valores sensibles ---------- */
+
+const sensitiveSet = new Set<string>();
+
+/**
+ * Declara un valor o texto sensible y lo devuelve tal cual, para usarlo en la misma línea:
+ *
+ *   const password = sensitive(process.env.PEDRO_PASSWORD ?? "");
+ *   await api.post("/v1/auth/token", { data: { email, password } });
+ *
+ * El caso usa el valor real. En el reporte y en el HTML queda ofuscado (`••••`) en todo lugar donde aparezca:
+ * URL, headers, bodies, anotaciones y aserciones. Funciona en el módulo, en defineCase o dentro de un paso.
+ * Valores de menos de 4 caracteres no se registran, porque ofuscarlos taparía texto común.
+ */
+export function sensitive<T extends string | number | null | undefined>(value: T): T {
+  if (value != null) {
+    const v = String(value);
+    if (v.length >= 4) sensitiveSet.add(v);
+  }
+  return value;
+}
+
+/** Valores declarados con sensitive() (y los de fromEnv que existen en el entorno). Lo usa run.ts. */
+export function sensitiveValues(): string[] {
+  return [...sensitiveSet];
+}
+
+/** Reemplaza los valores sensibles de un texto por `••••`. */
+export function maskSensitive(text: string): string {
+  let out = text;
+  for (const v of [...sensitiveSet].sort((a, b) => b.length - a.length)) out = out.split(v).join("••••");
+  return out;
 }
 
 /* ---------- utilidades para usar dentro de los pasos sin `t` ---------- */
