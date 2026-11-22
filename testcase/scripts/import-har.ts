@@ -10,7 +10,7 @@
  *   x-testcase-uc: UC-03                                    (obligatorio: caso de uso)
  *   x-testcase-annotations: {"usuario":"…","paso":"when"}   (opcional: anotaciones, en JSON o b64:<base64url del JSON>)
  * Los casos escritos con el espacio de trabajo de Playwright (run.ts) agregan además x-testcase-step y x-testcase-request,
- * que sirven para unir cada request con las aserciones de `run-assertions.json`.
+ * que sirven para unir cada request con las aserciones de `run-assertions.json`, y x-testcase-run con el id de la corrida.
  *
  * Uso:
  *   node import-har.ts <reporte.json> <evidencia.har> --service <nombre> [--assertions run-assertions.json] [--include-secrets]
@@ -19,7 +19,7 @@
  *   --assertions       Aserciones que escribió run.ts. Por defecto, run-assertions.json junto al reporte, si existe.
  *   --include-secrets  Guarda los valores sensibles en `secrets`. Por defecto solo se guardan enmascarados.
  *
- * Se omiten las entradas anteriores a run.startedAt (de corridas previas) y los archivos estáticos del navegador
+ * Se omiten las entradas de otras corridas (por x-testcase-run o, sin ese header, por ser anteriores a run.startedAt) y los archivos estáticos del navegador
  * (CSS, JavaScript, imágenes y fuentes).
  *
  * Las entradas ya importadas (mismo archivo y mismo índice) se omiten, así que se puede correr más de una vez.
@@ -32,7 +32,7 @@ type Json = any;
 
 const SENSITIVE_HEADERS = new Set(["authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key", "x-service-token", "x-auth-token"]);
 const SENSITIVE_FIELD = /^(password|pass|passwd|secret|client_secret|token|access_token|refresh_token|id_token|api[_-]?key)$/i;
-const HOP_HEADERS = new Set(["x-testcase-uc", "x-testcase-annotations", "x-testcase-step", "x-testcase-request"]);
+const HOP_HEADERS = new Set(["x-testcase-run", "x-testcase-uc", "x-testcase-annotations", "x-testcase-step", "x-testcase-request"]);
 const STATIC_MIME = /(text\/css|javascript|^image\/|^font\/|x-icon|wasm)/i;
 const STATIC_EXT = /\.(css|m?js|map|png|jpe?g|gif|svg|ico|webp|woff2?|ttf|otf)(\?|$)/i;
 
@@ -184,7 +184,8 @@ const skipped: string[] = [];
   const uc = reqHeaders.find((h) => h.name === "x-testcase-uc")?.value;
   if (!uc) return void skipped.push(`entrada ${index}: sin header x-testcase-uc`);
   if (!ucIds.has(uc)) return void skipped.push(`entrada ${index}: el caso ${uc} no existe en el reporte`);
-  if (Date.parse(e.startedDateTime) < runStart - 1000) return void skipped.push(`entrada ${index}: es de una corrida anterior`);
+  const entryRun = reqHeaders.find((h) => h.name === "x-testcase-run")?.value;
+  if (entryRun ? entryRun !== report.run.id : Date.parse(e.startedDateTime) < runStart - 1000) return void skipped.push(`entrada ${index}: es de una corrida anterior`);
   if (STATIC_MIME.test(e.response.content?.mimeType ?? "") || STATIC_EXT.test(new URL(e.request.url).pathname)) return void skipped.push(`entrada ${index}: archivo estático`);
   const requestTag = reqHeaders.find((h) => h.name === "x-testcase-request")?.value;
   const stepTag = reqHeaders.find((h) => h.name === "x-testcase-step")?.value;

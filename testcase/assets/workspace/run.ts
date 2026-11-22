@@ -336,7 +336,7 @@ for (const { def, file } of defs) {
   const checks: RecordedCheck[] = [];
   const notations: RecordedNotation[] = [];
   const requestTags: string[] = [];
-  const { t, close, lastTag } = createContext({ def, services, newApi, getBrowser, checks, notations, requestTags });
+  const { t, close, lastTag } = createContext({ def, services, newApi, getBrowser, checks, notations, requestTags, runId: report.run.id });
   const t0 = Date.now();
   let error: string | undefined;
   try {

@@ -472,8 +472,11 @@ export function createContext(opts: {
   checks: RecordedCheck[];
   notations: RecordedNotation[];
   requestTags: string[];
+  /** Corrida del reporte (header x-testcase-run): import-har.ts omite la evidencia de otras corridas. */
+  runId?: string;
 }) {
   const { def, services, checks, notations, requestTags } = opts;
+  const runHeader: Record<string, string> = opts.runId ? { "x-testcase-run": opts.runId } : {};
   let paso: Paso = "given";
   let stepTag = randomUUID();
   let stepAnnotations: Annotations = {};
@@ -489,6 +492,7 @@ export function createContext(opts: {
   const currentAnnotations = (extra?: Annotations): Annotations => ({ ...(def.annotations ?? {}), paso, ...stepAnnotations, ...(extra ?? {}) });
 
   const stepHeaders = () => ({
+    ...runHeader,
     "x-testcase-uc": def.id,
     "x-testcase-step": stepTag,
     "x-testcase-annotations": encodeHeaderJson(currentAnnotations()),
@@ -521,6 +525,7 @@ export function createContext(opts: {
         method,
         headers: {
           ...(o.headers ?? {}),
+          ...runHeader,
           "x-testcase-uc": def.id,
           "x-testcase-step": stepTag,
           "x-testcase-request": tag,

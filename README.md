@@ -22,3 +22,18 @@ bunx skills add JonDotsoy/testcase
 - `testcase/assets/`: plantilla HTML, JSON inicial y un reporte de ejemplo.
 
 Los scripts no tienen dependencias y corren con `bun` o con Node 22.6 o superior.
+
+## Pruebas
+
+Las pruebas validan toda la skill: la librería de los casos (`testcase.ts`), `run.ts --plan` y el `compose.yaml` que genera, `cases.ts`, `import-har.ts`, `sync-report.ts`, `render-report.ts`, el schema del reporte y un flujo completo con Playwright, un servidor de prueba y un proxy que graba el HAR como mitmdump.
+
+```sh
+npm install                          # o bun install
+npx playwright install chromium      # para el flujo completo; sin Chromium esas pruebas se omiten
+npm test                             # todas
+npm run test:unit                    # sin navegador
+npm run test:e2e                     # flujo completo
+npm run typecheck
+```
+
+Requieren Node 22.18 o superior. La prueba de `compose.yaml` usa `docker compose config` si está instalado.
