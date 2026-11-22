@@ -8,13 +8,19 @@
  *
  * El agente marca cada request que envía con dos headers, que el import lee y luego quita de la evidencia:
  *   x-testcase-uc: UC-03                                    (obligatorio: caso de uso)
- *   x-testcase-annotations: {"usuario":"…","paso":"when"}   (opcional: anotaciones, en JSON)
+ *   x-testcase-annotations: {"usuario":"…","paso":"when"}   (opcional: anotaciones, en JSON o b64:<base64url del JSON>)
+ * Los casos escritos con el espacio de trabajo de Playwright (run.ts) agregan además x-testcase-step y x-testcase-request,
+ * que sirven para unir cada request con las aserciones de `run-assertions.json`.
  *
  * Uso:
- *   node import-har.ts <reporte.json> <evidencia.har> --service <nombre> [--include-secrets]
+ *   node import-har.ts <reporte.json> <evidencia.har> --service <nombre> [--assertions run-assertions.json] [--include-secrets]
  *
  *   --service          Servicio `connected` del reporte al que apunta el proxy. Su `endpoint` es la URL real.
+ *   --assertions       Aserciones que escribió run.ts. Por defecto, run-assertions.json junto al reporte, si existe.
  *   --include-secrets  Guarda los valores sensibles en `secrets`. Por defecto solo se guardan enmascarados.
+ *
+ * Se omiten las entradas anteriores a run.startedAt (de corridas previas) y los archivos estáticos del navegador
+ * (CSS, JavaScript, imágenes y fuentes).
  *
  * Las entradas ya importadas (mismo archivo y mismo índice) se omiten, así que se puede correr más de una vez.
  * Las aserciones no se importan: el agente las agrega después y corre sync-report.ts.
@@ -26,14 +32,16 @@ type Json = any;
 
 const SENSITIVE_HEADERS = new Set(["authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key", "x-service-token", "x-auth-token"]);
 const SENSITIVE_FIELD = /^(password|pass|passwd|secret|client_secret|token|access_token|refresh_token|id_token|api[_-]?key)$/i;
-const HOP_HEADERS = new Set(["x-testcase-uc", "x-testcase-annotations"]);
+const HOP_HEADERS = new Set(["x-testcase-uc", "x-testcase-annotations", "x-testcase-step", "x-testcase-request"]);
+const STATIC_MIME = /(text\/css|javascript|^image\/|^font\/|x-icon|wasm)/i;
+const STATIC_EXT = /\.(css|m?js|map|png|jpe?g|gif|svg|ico|webp|woff2?|ttf|otf)(\?|$)/i;
 
 const args = process.argv.slice(2);
 const flag = (name: string) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
 };
-const positional = args.filter((a, i) => !a.startsWith("--") && !(i > 0 && args[i - 1] === "--service"));
+const positional = args.filter((a, i) => !a.startsWith("--") && !(i > 0 && ["--service", "--assertions"].includes(args[i - 1])));
 const [reportFile, harFile] = positional;
 const serviceName = flag("--service");
 const includeSecrets = args.includes("--include-secrets");
@@ -123,6 +131,7 @@ function parseBody(text: string | undefined, mime: string | undefined, encoding?
 
 function parseAnnotations(v: string | undefined): Record<string, string> {
   if (!v) return {};
+  if (v.startsWith("b64:")) v = Buffer.from(v.slice(4), "base64url").toString("utf8");
   try {
     return JSON.parse(v);
   } catch {
@@ -130,6 +139,19 @@ function parseAnnotations(v: string | undefined): Record<string, string> {
     return Object.fromEntries(v.split(";").map((p) => p.split("=").map((s) => s.trim())).filter((p) => p[0]));
   }
 }
+
+// Aserciones de run.ts
+const assertionsPath = resolve(flag("--assertions") ?? resolve(dirname(reportPath), "run-assertions.json"));
+let runChecks: Json[] = [];
+try {
+  const ra = JSON.parse(readFileSync(assertionsPath, "utf8"));
+  if (ra.runId === report.run.id) runChecks = ra.cases.flatMap((c: Json) => c.checks.map((k: Json) => ({ ...k, uc: c.id })));
+  else console.log(`Aviso: ${assertionsPath} es de la corrida ${ra.runId} y el reporte está en ${report.run.id}. No se importan aserciones.`);
+} catch {
+  /* sin aserciones de run.ts */
+}
+const byRequestTag = new Map<string, Json>();
+const lastByStepTag = new Map<string, Json>();
 
 let imported = 0;
 const skipped: string[] = [];
@@ -139,6 +161,10 @@ const skipped: string[] = [];
   const uc = reqHeaders.find((h) => h.name === "x-testcase-uc")?.value;
   if (!uc) return void skipped.push(`entrada ${index}: sin header x-testcase-uc`);
   if (!ucIds.has(uc)) return void skipped.push(`entrada ${index}: el caso ${uc} no existe en el reporte`);
+  if (Date.parse(e.startedDateTime) < runStart - 1000) return void skipped.push(`entrada ${index}: es de una corrida anterior`);
+  if (STATIC_MIME.test(e.response.content?.mimeType ?? "") || STATIC_EXT.test(new URL(e.request.url).pathname)) return void skipped.push(`entrada ${index}: archivo estático`);
+  const requestTag = reqHeaders.find((h) => h.name === "x-testcase-request")?.value;
+  const stepTag = reqHeaders.find((h) => h.name === "x-testcase-step")?.value;
   const annotations = parseAnnotations(reqHeaders.find((h) => h.name === "x-testcase-annotations")?.value);
 
   const proxied = new URL(e.request.url);
@@ -168,7 +194,7 @@ const skipped: string[] = [];
     .map((h) => `  -H '${h.name}: ${h.sensitive ? (/^bearer /i.test(h.value) ? "Bearer $TOKEN" : "$SECRET") : h.value}'`);
   const curlBody = e.request.postData?.text ? ` \\\n  -d '${JSON.stringify(reqBody.value).replace(/'/g, "'\\''")}'` : "";
 
-  report.requests.push({
+  const record: Json = {
     id: nextId++,
     useCaseId: uc,
     protocol,
@@ -192,12 +218,36 @@ const skipped: string[] = [];
     assertions: [],
     reproduce: { tool: "curl", command: `curl -X ${e.request.method} '${url}' \\\n${curlHeaders.join(" \\\n")}${curlBody}`, env: curlHeaders.some((h) => h.includes("$TOKEN")) ? ["TOKEN"] : [] },
     evidence: { source: "proxy", file: evidenceFile, entry: index },
-  });
+  };
+  report.requests.push(record);
+  if (requestTag) byRequestTag.set(requestTag, record);
+  if (stepTag) lastByStepTag.set(stepTag, record);
   imported++;
 });
+
+// Une las aserciones con los requests importados
+let attached = 0;
+const orphan: string[] = [];
+for (const c of runChecks) {
+  const target = c.tagKind === "request" ? byRequestTag.get(c.tag) ?? lastByStepTag.get(c.tag) : lastByStepTag.get(c.tag);
+  if (!target) {
+    orphan.push(`${c.uc}: ${c.expression}`);
+    continue;
+  }
+  const a: Json = { id: `r${target.id}.a${target.assertions.length + 1}`, expression: c.expression, passed: c.passed };
+  if (c.expectedFailure) a.expectedFailure = true;
+  if (!c.passed) {
+    a.expected = c.expected;
+    a.actual = c.actual;
+  }
+  target.assertions.push(a);
+  attached++;
+}
 
 if (!includeSecrets && Object.keys(report.secrets).length === 0) delete report.secrets;
 writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
 console.log(`Importados ${imported} requests desde ${harFile} al servicio ${serviceName}.`);
 if (skipped.length) console.log(`Omitidas ${skipped.length} entradas:\n  - ${skipped.join("\n  - ")}`);
-console.log("Agrega las aserciones de cada request y corre sync-report.ts.");
+if (runChecks.length) console.log(`Aserciones unidas a sus requests: ${attached} de ${runChecks.length}.`);
+if (orphan.length) console.log(`Aserciones sin request en esta evidencia (¿otro servicio o el proxy no las capturó?):\n  - ${orphan.join("\n  - ")}`);
+console.log(runChecks.length ? "Ahora corre sync-report.ts." : "Agrega las aserciones de cada request y corre sync-report.ts.");

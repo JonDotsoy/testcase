@@ -1,0 +1,21 @@
+{
+  "name": "testcase-workspace",
+  "private": true,
+  "type": "module",
+  "description": "Espacio de trabajo temporal de la skill testcase: scripts de casos de uso con Playwright.",
+  "scripts": {
+    "cases": "node run.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "browsers": "playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
+  },
+  "engines": {
+    "node": ">=22.6"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "typescript": "5.6.3"
+  }
+}
