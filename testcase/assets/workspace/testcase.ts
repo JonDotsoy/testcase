@@ -47,6 +47,8 @@ export interface TrackedResponse {
   /** Etiqueta del request en la evidencia (header x-testcase-request). */
   readonly tag: string;
   readonly raw: APIResponse;
+  /** Body de la respuesta, ya leído: el JSON parseado si es JSON, el texto si no, `undefined` si viene vacío. */
+  readonly body: any;
   status(): number;
   headers(): Record<string, string>;
   json<T = any>(): Promise<T>;
@@ -484,9 +486,19 @@ export function createContext(opts: {
         failOnStatusCode: false,
         maxRedirects: 0,
       });
+      const text = await raw.text().catch(() => "");
+      let body: any = text === "" ? undefined : text;
+      if (text && /json/i.test(raw.headers()["content-type"] ?? "")) {
+        try {
+          body = JSON.parse(text);
+        } catch {
+          /* no era JSON válido: queda el texto */
+        }
+      }
       return {
         tag,
         raw,
+        body,
         status: () => raw.status(),
         headers: () => raw.headers(),
         json: () => raw.json(),

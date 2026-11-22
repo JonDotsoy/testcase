@@ -43,9 +43,8 @@ export default defineCase(() => {
       data: { email: "pedro@acme.test", password: process.env.PEDRO_PASSWORD ?? "" },
     });
     ensure("status == 200", login.status(), 200);
-    const body = await login.json();
-    vars.token = body.access_token;
-    notation("rol", body.user.role); // después del request: se une a ese request
+    vars.token = login.body.access_token;
+    notation("rol", login.body.user.role); // después del request: se une a ese request
   });
 
   when("Pedro intenta cancelarlo", async () => {

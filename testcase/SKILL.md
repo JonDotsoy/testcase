@@ -81,9 +81,8 @@ export default defineCase(() => {
     notation("usuario", "pedro@acme.test");          // antes del request: la lleva el request que sigue
     const login = await api.post("/v1/auth/token", { data: { email: "pedro@acme.test", password: process.env.PEDRO_PASSWORD } });
     ensure("status == 200", login.status(), 200);
-    const body = await login.json();
-    vars.token = body.access_token;
-    notation("rol", body.user.role);                  // después del request: se une a ese request
+    vars.token = login.body.access_token;             // body ya viene parseado
+    notation("rol", login.body.user.role);            // después del request: se une a ese request
   });
 
   when("Pedro intenta cancelarlo", async () => {
@@ -115,7 +114,7 @@ La API completa:
 | `defineService({ name, endpoint, … })` | Servicio URL que ya existe (`connected`). Campos: `endpoint`, `version?`, `health?`. |
 | `defineService({ name, image \| build, … })` | Contenedor (`provisioned`). Campos: `image` o `build` (texto con el contexto, o `{ context, dockerfile?, args?, target? }`; rutas relativas a la raíz del proyecto), `command?`, `tmpfs?` (rutas en memoria), `ports?` (`{ container, host? }`; sin `host` se asigna uno desde 55000), `env?`, `dependsOn?` (nombres o servicios), `storage?`, `artifacts?` (`{ kind, source, description? }`), `health?`, `http?` (si habla HTTP, va por proxy). |
 | `fromEnv("VAR")` | Valor de `env` que sale del entorno del host. Queda enmascarado en el reporte. |
-| `servicio.get/post/put/patch/delete/fetch(ruta, opts)` | Request HTTP (Playwright) por el proxy del servicio, con `data`, `form`, `params`, `headers`. Devuelve `status()`, `headers()`, `json()`, `text()`. |
+| `servicio.get/post/put/patch/delete/fetch(ruta, opts)` | Request HTTP (Playwright) por el proxy del servicio, con `data`, `form`, `params`, `headers`. Devuelve `body` (el JSON ya parseado, o el texto), `status()` y `headers()`. |
 | `servicio.url(ruta)` | URL del servicio por el proxy, para `page().goto()`. |
 | `notation(nombre, valor, { response? })` | Define una anotación y devuelve el valor: `const timeAlive = notation("time alive", res.body.timeAlive)`. En el cuerpo de `defineCase` es de todo el caso. En un paso, antes de un request, la llevan los requests que siguen en ese paso. Después de un request, se une a ese request. |
 | `check(expresión, actual, esperado, { response?, expectedFailure? })` | Registra una aserción y sigue. Sin `response`, se une al último request del paso, o al último del caso si el paso no hizo ninguno (por ejemplo, un `then` que revisa la respuesta del `when`). |
