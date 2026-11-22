@@ -15,9 +15,9 @@ El resultado de esta skill es un **reporte HTML** de pruebas. Para llegar a él:
 
 ```text
 persona: describe casos
-  └─▶ agente: escribe cases/UC-NN.case.ts (defineCase + defineService, Playwright) en un espacio temporal
-  └─▶ run.ts --plan: servicios al reporte + comandos de Podman ──▶ agente los levanta con su proxy de evidencia
-        └─▶ run.ts: corre los casos por el proxy ──▶ .testcase/evidence/*.har + .testcase/run-assertions.json
+  └─▶ agente: escribe .testcase/cases/*.case.ts (defineCase + defineService, Playwright)
+  └─▶ cases.ts --plan: servicios al reporte + compose.yaml ──▶ agente los levanta con su proxy de evidencia
+        └─▶ cases.ts: espacio temporal + run.ts, corre los casos por el proxy ──▶ .testcase/evidence/*.har + .testcase/run-assertions.json
               └─▶ import-har.ts ──▶ sync-report.ts ──▶ render-report.ts ──▶ .testcase/report.html
 ```
 
@@ -30,11 +30,12 @@ persona: describe casos
 | `assets/report.empty.json` | JSON inicial para un proyecto nuevo. |
 | `assets/report.example.json` | Reporte completo de ejemplo (9 casos, 24 requests HTTP, gRPC, GraphQL, WebSocket y SQL). |
 | `assets/report.template.html` | Plantilla del HTML. No la edites para un reporte puntual. |
+| `scripts/cases.ts` | Ejecuta los `*.case.ts`: arma el espacio de trabajo temporal, instala Playwright si hace falta y corre `run.ts` (`--plan`, `--only`, `--headed`, `--typecheck`). |
 | `scripts/import-har.ts` | Importa la evidencia (HAR) del proxy y la une con las aserciones del runner. |
 | `scripts/sync-report.ts` | Recalcula los campos derivados del JSON (estados, totales, línea de tiempo, inventario de invocaciones). |
 | `scripts/render-report.ts` | Valida las referencias del JSON y genera el HTML. |
 
-Los scripts de `scripts/` no tienen dependencias: córrelos con `bun <script>` o `node <script>` (Node 22.6 o superior). En los comandos de abajo, `<skill>` es la carpeta donde está instalada esta skill y `$WS` es el espacio de trabajo temporal.
+Los scripts de `scripts/` no tienen dependencias: córrelos con `bun <script>` o `node <script>` (Node 22.6 o superior). En los comandos de abajo, `<skill>` es la carpeta donde está instalada esta skill y `.testcase/` es la carpeta del reporte en la raíz del proyecto.
 
 ## Flujo
 
@@ -42,19 +43,11 @@ Los scripts de `scripts/` no tienen dependencias: córrelos con `bun <script>` o
 
 Si no existe `.testcase/report.json`, cópialo desde `assets/report.empty.json` y completa `manifest.suite` con el nombre del sistema que se prueba. Si existe, léelo completo antes de cambiar algo.
 
-Crea el espacio de trabajo en un directorio temporal, fuera del repositorio de la persona:
-
-```sh
-WS=$(mktemp -d -t testcase-XXXX)
-cp -r <skill>/assets/workspace/. "$WS"/
-cd "$WS" && bun install && bunx playwright install chromium
-```
-
-Si ya hay scripts en `.testcase/cases/` de una corrida anterior, cópialos a `$WS/cases/` para partir de ellos.
+Los casos se escriben en `.testcase/cases/` del proyecto. No instales nada en el repositorio de la persona: `scripts/cases.ts` arma solo un espacio de trabajo temporal (fuera del repositorio, uno por proyecto) con su propio `package.json`, Playwright y el navegador, copia ahí los scripts y los ejecuta. La primera vez instala las dependencias; las siguientes las reutiliza.
 
 ### 2. Escribir cada caso de uso como script
 
-Los casos van en `$WS/cases/*.case.ts`: un archivo por caso (`UC-NN.case.ts`) o varios casos relacionados en un archivo. **Cada script es autocontenido**: importa desde `testcase.ts` todo lo que usa y declara con `defineService` los servicios que necesita. Así, el script basta para saber qué se prueba, contra qué y cómo.
+Los casos van en `.testcase/cases/*.case.ts`: un archivo por caso (`UC-NN.case.ts`) o varios casos relacionados en un archivo. **Cada script es autocontenido**: importa desde `testcase.ts` todo lo que usa y declara con `defineService` los servicios que necesita. Así, el script basta para saber qué se prueba, contra qué y cómo.
 
 ```ts
 import { defineCase, defineService, fromEnv, sensitive, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";
@@ -136,14 +129,14 @@ Reglas:
 - Las aserciones verifican lo que dice el `then`. Si el comportamiento correcto es un error (403, 429, un `errors` de GraphQL), pídelo de forma explícita con `expectedFailure: true`.
 - Las credenciales salen de variables de entorno (`process.env`, `fromEnv`), nunca escritas en el script.
 - Usa siempre los servicios declarados y `page()`. No uses `fetch` ni otro cliente: sus requests no llevarían las etiquetas ni pasarían por el proxy.
-- Revisa los tipos con `bun run typecheck` antes de correr.
+- Revisa los tipos antes de correr: `bun <skill>/scripts/cases.ts --report .testcase/report.json --typecheck`. Los imports van a `"../testcase.ts"`, que existe en el espacio de trabajo, no en el proyecto.
 
 ### 3. Proveer los servicios
 
 Los servicios salen de los `defineService` de los scripts, y se levantan con un **archivo compose** que genera `run.ts`. **Usa Podman** (`podman compose`). Usa Docker (`docker compose`) solo si Podman no está instalado, y dilo en el reporte (`proxy.engine`, `run.runtime.engine`).
 
 ```sh
-cd "$WS" && node run.ts --report /ruta/al/proyecto/.testcase/report.json --plan
+bun <skill>/scripts/cases.ts --report .testcase/report.json --plan
 ```
 
 `--plan` pasa al reporte los servicios declarados (`connected` con `host` y `endpoint`; `provisioned` con `image`, `build`, `ports`, `env` enmascarado y `dependsOn`), les asigna puertos y un proxy de evidencia a cada servicio HTTP, y escribe `.testcase/compose.yaml`:
@@ -168,11 +161,12 @@ Todo servicio HTTP se prueba **a través de su proxy**. Nunca llames al servicio
 ### 4. Correr los casos
 
 ```sh
-cd "$WS" && node run.ts --report /ruta/al/proyecto/.testcase/report.json      # todos
-node run.ts --report …/report.json --only UC-03                                 # solo algunos
+bun <skill>/scripts/cases.ts --report .testcase/report.json                   # todos
+bun <skill>/scripts/cases.ts --report .testcase/report.json --only UC-03      # solo algunos
+bun <skill>/scripts/cases.ts --report .testcase/report.json --headed          # con el navegador visible
 ```
 
-`run.ts` abre una corrida nueva en el reporte (incrementa `run.number`, fija `run.startedAt` y vacía los requests), crea o actualiza cada caso en `useCases` desde su script, copia los scripts a `.testcase/cases/` y corre cada caso. Las aserciones quedan en `.testcase/run-assertions.json`. Si un caso falla antes de hacer requests, queda `pending` con el error como mensaje.
+`cases.ts` copia los scripts al espacio de trabajo y llama a `run.ts`, que abre una corrida nueva en el reporte (incrementa `run.number`, fija `run.startedAt` y vacía los requests), crea o actualiza cada caso en `useCases` desde su script, copia los scripts a `.testcase/cases/` y corre cada caso. Las aserciones quedan en `.testcase/run-assertions.json`. Si un caso falla antes de hacer requests, queda `pending` con el error como mensaje.
 
 Después:
 
@@ -207,11 +201,11 @@ Entrega `.testcase/report.html` a la persona y resume en pocas frases:
 - Cuántos casos pasaron, fallaron o quedaron pendientes.
 - Para cada fallo: el caso por título e id, qué se esperaba y qué llegó, y si parece un bug del servicio o un error del caso.
 
-Al terminar, borra el espacio de trabajo temporal (`rm -rf "$WS"`) y `.testcase/run-sensitive.json`. Los scripts quedan en `.testcase/cases/`.
+Al terminar, borra `.testcase/run-sensitive.json`. El espacio de trabajo temporal se reutiliza en la próxima corrida; si la persona no va a volver a correr, agrega `--clean` a la última corrida para borrarlo.
 
 ## Cambios posteriores
 
-- **La persona agrega o cambia un caso**: edita o crea su script, corre `--plan` si cambió algún servicio, levanta el compose, corre `run.ts --only UC-NN`, importa, sincroniza y genera el HTML. Una corrida con `--only` reemplaza los requests del reporte: si quieres el reporte completo, corre todos los casos.
+- **La persona agrega o cambia un caso**: edita o crea su script, corre `--plan` si cambió algún servicio, levanta el compose, corre `cases.ts --only UC-NN`, importa, sincroniza y genera el HTML. Una corrida con `--only` reemplaza los requests del reporte: si quieres el reporte completo, corre todos los casos.
 - **La persona quita un caso**: borra su script y su elemento en `useCases`, y vuelve a correr.
 - **Historial**: antes de una corrida nueva, guarda una copia como `.testcase/report-<número>.json` si la persona lo pide.
 

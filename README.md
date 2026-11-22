@@ -18,7 +18,7 @@ bunx skills add JonDotsoy/testcase
 
 - `testcase/SKILL.md`: flujo de trabajo de la skill.
 - `testcase/references/report-schema.md`: schema del reporte JSON.
-- `testcase/scripts/`: `import-har.ts` (evidencia del proxy), `sync-report.ts` (campos derivados) y `render-report.ts` (HTML).
+- `testcase/scripts/`: `cases.ts` (ejecuta los `*.case.ts` en un espacio temporal con Playwright), `import-har.ts` (evidencia del proxy), `sync-report.ts` (campos derivados) y `render-report.ts` (HTML).
 - `testcase/assets/`: plantilla HTML, JSON inicial y un reporte de ejemplo.
 
 Los scripts no tienen dependencias y corren con `bun` o con Node 22.6 o superior.
