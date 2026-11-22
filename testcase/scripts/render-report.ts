@@ -95,6 +95,10 @@ function check(report: Report): string[] {
     if (u.status === "failed" && !u.failure) errors.push(`${u.id} está fallido pero no trae "failure"`);
   }
   const serviceNames = new Set(report.services.map((s) => s.name));
+  for (const s of report.services) {
+    if (!s.health) errors.push(`el servicio "${s.name}" no tiene health: corre su healthcheck y registra el resultado`);
+    if (s.mode === "provisioned" && !Array.isArray(s.artifacts)) errors.push(`el servicio "${s.name}" no tiene artifacts (usa [] si no carga ninguno)`);
+  }
   for (const r of report.requests) {
     for (const name of (r.services as string[]) ?? []) if (!serviceNames.has(name)) errors.push(`request ${r.id} usa el servicio "${name}", que no está en "services"`);
   }

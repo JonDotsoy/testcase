@@ -387,7 +387,7 @@ const SERVICES = REPORT.services.map(s=>{
     const extra = s.storage ? ["almacenamiento", s.storage==="tmpfs"?"tmpfs, se descarta al terminar":s.storage] : s.dependsOn&&s.dependsOn.length ? ["depende de", s.dependsOn.join(", ")] : null;
     return {name:s.name, mode:"prov", origin:s.image, endpoint:(s.ports||[]).some(p=>p.host!==p.container)?s.ports.map(p=>`localhost:${p.host} → ${p.container}`).join(", "):s.endpoint,
       health:`${s.health.check} · listo en ${fmtMs(s.health.durationMs)}`, env, extra, start:up.startOffsetMs, end:up.startOffsetMs+up.durationMs,
-      ready:s.readyMs, arts:s.artifacts.map(a=>({k:ART_LABEL[a.kind]||a.kind, src:a.source, d:a.description||"", start:a.startOffsetMs, end:a.startOffsetMs+a.durationMs}))};
+      ready:s.readyMs, proxy:s.proxy, arts:s.artifacts.map(a=>({k:ART_LABEL[a.kind]||a.kind, src:a.source, d:a.description||"", start:a.startOffsetMs, end:a.startOffsetMs+a.durationMs}))};
   }
   const chk = REPORT.timeline.find(t=>t.kind==="service.check" && t.ref===s.name) || {startOffsetMs:0, durationMs:s.health.durationMs};
   return {name:s.name, mode:"conn", origin:"host externo "+s.host, endpoint:s.endpoint, health:`${s.health.check} · ${fmtMs(s.health.durationMs)}`,

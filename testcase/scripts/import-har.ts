@@ -143,9 +143,13 @@ function parseAnnotations(v: string | undefined): Record<string, string> {
 // Aserciones de run.ts
 const assertionsPath = resolve(flag("--assertions") ?? resolve(dirname(reportPath), "run-assertions.json"));
 let runChecks: Json[] = [];
+let runNotations: Json[] = [];
 try {
   const ra = JSON.parse(readFileSync(assertionsPath, "utf8"));
-  if (ra.runId === report.run.id) runChecks = ra.cases.flatMap((c: Json) => c.checks.map((k: Json) => ({ ...k, uc: c.id })));
+  if (ra.runId === report.run.id) {
+    runChecks = ra.cases.flatMap((c: Json) => c.checks.map((k: Json) => ({ ...k, uc: c.id })));
+    runNotations = ra.cases.flatMap((c: Json) => (c.notations ?? []).map((n: Json) => ({ ...n, uc: c.id })));
+  }
   else console.log(`Aviso: ${assertionsPath} es de la corrida ${ra.runId} y el reporte está en ${report.run.id}. No se importan aserciones.`);
 } catch {
   /* sin aserciones de run.ts */
@@ -244,10 +248,23 @@ for (const c of runChecks) {
   attached++;
 }
 
+// Anotaciones definidas con notation() después de un request: se suman a ese request
+let notationsAttached = 0;
+for (const n of runNotations) {
+  const target = byRequestTag.get(n.tag);
+  if (!target) {
+    orphan.push(`${n.uc}: notation("${n.name}")`);
+    continue;
+  }
+  target.annotations = { ...(target.annotations ?? {}), [n.name]: n.value };
+  notationsAttached++;
+}
+
 if (!includeSecrets && Object.keys(report.secrets).length === 0) delete report.secrets;
 writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
 console.log(`Importados ${imported} requests desde ${harFile} al servicio ${serviceName}.`);
 if (skipped.length) console.log(`Omitidas ${skipped.length} entradas:\n  - ${skipped.join("\n  - ")}`);
 if (runChecks.length) console.log(`Aserciones unidas a sus requests: ${attached} de ${runChecks.length}.`);
-if (orphan.length) console.log(`Aserciones sin request en esta evidencia (¿otro servicio o el proxy no las capturó?):\n  - ${orphan.join("\n  - ")}`);
+if (runNotations.length) console.log(`Anotaciones unidas a sus requests: ${notationsAttached} de ${runNotations.length}.`);
+if (orphan.length) console.log(`Aserciones o anotaciones sin request en esta evidencia (¿otro servicio o el proxy no las capturó?):\n  - ${orphan.join("\n  - ")}`);
 console.log(runChecks.length ? "Ahora corre sync-report.ts." : "Agrega las aserciones de cada request y corre sync-report.ts.");

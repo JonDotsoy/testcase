@@ -8,15 +8,15 @@ description: Convierte los casos de prueba que describe la persona en un reporte
 El resultado de esta skill es un **reporte HTML** de pruebas. Para llegar a él:
 
 - **La persona describe los casos de prueba** en lenguaje natural ("un cliente no puede cancelar el pedido de otro").
-- **El agente escribe cada caso de uso como un script TypeScript** (`UC-NN.case.ts`) que usa Playwright, tanto su cliente HTTP como el navegador. Los scripts viven en un espacio de trabajo temporal con su propio `package.json` y sus dependencias.
+- **El agente escribe cada caso de uso como un script TypeScript autocontenido** (`UC-NN.case.ts`): declara sus servicios con `defineService` y usa Playwright, tanto su cliente HTTP como el navegador. Los scripts viven en un espacio de trabajo temporal con su propio `package.json` y sus dependencias.
 - **El agente mantiene un JSON** (`.testcase/report.json`) que sigue el schema de `references/report-schema.md`. Es la única fuente de verdad del reporte.
 - **El agente provee los servicios, su configuración y los estados**: levanta los contenedores con Podman y pone un proxy delante de cada servicio URL para capturar la evidencia de cada request y response.
 - **Los scripts de la skill** importan la evidencia, recalculan los totales y generan el HTML. El agente no escribe HTML a mano.
 
 ```text
 persona: describe casos
-  └─▶ agente: escribe cases/UC-NN.case.ts (Playwright) en un espacio temporal
-  └─▶ agente: declara services en .testcase/report.json y los levanta con Podman + proxy de evidencia
+  └─▶ agente: escribe cases/UC-NN.case.ts (defineCase + defineService, Playwright) en un espacio temporal
+  └─▶ run.ts --plan: servicios al reporte + comandos de Podman ──▶ agente los levanta con su proxy de evidencia
         └─▶ run.ts: corre los casos por el proxy ──▶ .testcase/evidence/*.har + .testcase/run-assertions.json
               └─▶ import-har.ts ──▶ sync-report.ts ──▶ render-report.ts ──▶ .testcase/report.html
 ```
@@ -26,7 +26,7 @@ persona: describe casos
 | Archivo | Para qué |
 |---|---|
 | `references/report-schema.md` | Schema del JSON: tablas por objeto, lectura por protocolo, secretos y JSON Schema completo. Léelo antes de editar el JSON por primera vez. |
-| `assets/workspace/` | Plantilla del espacio de trabajo temporal: `package.json` (Playwright), `testcase.ts` (contexto del caso), `run.ts` (runner) y `examples/UC-01.case.ts`. |
+| `assets/workspace/` | Plantilla del espacio de trabajo temporal: `package.json` (Playwright), `testcase.ts` (librería: `defineCase`, `defineService`, `notation`, `check`…), `run.ts` (runner y `--plan` de servicios) y `examples/UC-01.case.ts`. |
 | `assets/report.empty.json` | JSON inicial para un proyecto nuevo. |
 | `assets/report.example.json` | Reporte completo de ejemplo (9 casos, 24 requests HTTP, gRPC, GraphQL, WebSocket y SQL). |
 | `assets/report.template.html` | Plantilla del HTML. No la edites para un reporte puntual. |
@@ -54,61 +54,78 @@ Si ya hay scripts en `.testcase/cases/` de una corrida anterior, cópialos a `$W
 
 ### 2. Escribir cada caso de uso como script
 
-Un archivo por caso en `$WS/cases/UC-NN.case.ts`. El caso se escribe con la sintaxis de `testcase.ts`: `defineCase` recibe una función que declara el título y los pasos, y cada paso trae su propia función con el código que lo ejecuta.
+Un archivo por caso en `$WS/cases/UC-NN.case.ts`. **Cada script es autocontenido**: importa desde `testcase.ts` todo lo que usa y declara con `defineService` los servicios que necesita. Así, el script basta para saber qué se prueba, contra qué y cómo.
 
 ```ts
-import { defineCase, title, annotations, given, when, then } from "../testcase.ts";
+import { defineCase, defineService, fromEnv, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";
+
+// Servicio URL que ya existe: sus requests pasan por el proxy de evidencia.
+const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
+
+// Contenedor que se levanta con Podman, con sus migraciones y seeds.
+const db = defineService({
+  name: "postgres",
+  image: "docker.io/library/postgres:16.4-alpine",
+  ports: [{ container: 5432 }],
+  env: { POSTGRES_DB: "pedidos_test", POSTGRES_PASSWORD: fromEnv("PG_PASSWORD") },
+  storage: "tmpfs",
+  artifacts: [{ kind: "migration", source: "./db/migrations/*.sql" }, { kind: "seed", source: "./db/seeds/usuarios.sql" }],
+  health: "pg_isready",
+});
 
 export default defineCase(() => {
   title(() => "Cliente no puede cancelar un pedido ajeno");
-  annotations({ tenant: "tienda-norte" });                    // anotaciones de todo el caso
+  notation("tenant", "tienda-norte");                 // anotación de todo el caso
 
-  given("un pedido creado por María", { usuario: "pedro@acme.test", perfil: "cliente" }, async (t) => {
-    const login = await t.api("api").post("/v1/auth/token", { data: { email: "pedro@acme.test", password: process.env.PEDRO_PASSWORD } });
-    t.require("status == 200", login.status(), 200, { response: login });
-    t.vars.token = (await login.json()).access_token;
+  given("un pedido creado por María", async () => {
+    notation("usuario", "pedro@acme.test");          // antes del request: la lleva el request que sigue
+    const login = await api.post("/v1/auth/token", { data: { email: "pedro@acme.test", password: process.env.PEDRO_PASSWORD } });
+    ensure("status == 200", login.status(), 200);
+    const body = await login.json();
+    vars.token = body.access_token;
+    notation("rol", body.user.role);                  // después del request: se une a ese request
   });
 
-  when("Pedro intenta cancelarlo", { usuario: "pedro@acme.test", "dueño-del-recurso": "maria@acme.test" }, async (t) => {
-    t.vars.cancel = await t.api("api").delete("/v1/orders/ord_01JD9", { headers: { authorization: `Bearer ${t.vars.token}` } });
+  when("Pedro intenta cancelarlo", async () => {
+    notation("dueño del recurso", "maria@acme.test");
+    vars.cancel = await api.delete("/v1/orders/ord_01JD9", { headers: { authorization: `Bearer ${vars.token}` } });
   });
 
-  then("la API responde 403", async (t) => {
-    t.check("status == 403", t.vars.cancel.status(), 403, { response: t.vars.cancel, expectedFailure: true });
+  then("la API responde 403", () => {
+    check("status == 403", vars.cancel.status(), 403, { expectedFailure: true });
   });
 
-  then("el pedido sigue en estado pending", { usuario: "maria@acme.test", perfil: "cliente" }, async (t) => {
-    const page = await t.page();                              // navegador de Playwright, también por el proxy
-    await page.goto(t.url("api", "/pedidos/ord_01JD9"));
-    t.check('estado visible == "pending"', await page.locator("[data-estado]").textContent(), "pending");
+  then("el pedido sigue en estado pending", async () => {
+    notation("usuario", "maria@acme.test");
+    const p = await page();                           // navegador de Playwright, también por el proxy
+    await p.goto(api.url("/pedidos/ord_01JD9"));
+    check('estado visible == "pending"', await p.locator("[data-estado]").textContent(), "pending");
   });
 });
 ```
 
-La sintaxis:
+La API completa:
 
 | | |
 |---|---|
 | `defineCase(() => { … })` | Declara el caso. La función corre una vez al cargar el archivo y debe ser síncrona: el código async va dentro de los pasos. |
-| `title(texto)` o `title(() => texto)` | Título del caso. Una vez por caso. |
+| `title(texto)` · `title(() => texto)` | Título del caso. Una vez por caso. |
 | `id("UC-NN")` | Opcional. Por defecto el id sale del nombre del archivo (`UC-03.case.ts` → `UC-03`). |
-| `annotations({ … })` | Anotaciones que llevan todos los requests del caso. |
-| `given(texto, fn)` · `given(texto, anotaciones, fn)` | Paso que prepara el estado. Las anotaciones son solo de ese paso. `fn` es opcional: `given("un pedido de María")` deja el paso solo como texto. |
-| `when(…)` · `then(…)` | Igual que `given`, para la acción y la verificación. |
+| `given(texto, fn?)` · `when(…)` · `then(…)` | Pasos. Se ejecutan en el orden en que se escriben. `fn` es opcional: `given("un pedido de María")` deja el paso solo como texto. |
+| `defineService({ name, endpoint, … })` | Servicio URL que ya existe (`connected`). Campos: `endpoint`, `version?`, `health?`. |
+| `defineService({ name, image, … })` | Contenedor (`provisioned`). Campos: `image`, `ports?` (`{ container, host? }`; sin `host` se asigna uno desde 55000), `env?`, `dependsOn?` (nombres o servicios), `storage?`, `artifacts?` (`{ kind, source, description? }`), `health?`, `http?` (si habla HTTP, va por proxy). |
+| `fromEnv("VAR")` | Valor de `env` que sale del entorno del host. Queda enmascarado en el reporte. |
+| `servicio.get/post/put/patch/delete/fetch(ruta, opts)` | Request HTTP (Playwright) por el proxy del servicio, con `data`, `form`, `params`, `headers`. Devuelve `status()`, `headers()`, `json()`, `text()`. |
+| `servicio.url(ruta)` | URL del servicio por el proxy, para `page().goto()`. |
+| `notation(nombre, valor, { response? })` | Define una anotación y devuelve el valor: `const timeAlive = notation("time alive", res.body.timeAlive)`. En el cuerpo de `defineCase` es de todo el caso. En un paso, antes de un request, la llevan los requests que siguen en ese paso. Después de un request, se une a ese request. |
+| `check(expresión, actual, esperado, { response?, expectedFailure? })` | Registra una aserción y sigue. Sin `response`, se une al último request del paso, o al último del caso si el paso no hizo ninguno (por ejemplo, un `then` que revisa la respuesta del `when`). |
+| `ensure(…)` | Igual que `check`, pero detiene el caso si falla. |
+| `page()` | Página de Playwright. Todos sus requests llevan las etiquetas del caso y del paso. |
+| `vars` | Datos compartidos entre los pasos del caso. |
 
-Cada caso necesita `title` y al menos un `given`, un `when` y un `then`. Puedes repetir cualquier paso: se ejecutan en el orden en que se escriben, y en el reporte sus textos se unen con " y ". Cada `fn` recibe el contexto `t`. Para pasar datos de un paso al siguiente, usa `t.vars`.
+Cada caso necesita `title` y al menos un `given`, un `when` y un `then`. En el reporte, los textos de pasos repetidos se unen con " y ". Cada `fn` también recibe el contexto `t` con lo mismo (`t.check`, `t.require`, `t.notation`, `t.page`, `t.vars`, `t.api(nombre)`, `t.url(nombre, ruta)`), por si prefieres no importar las utilidades.
 
-Lo que ofrece `t` (ver `testcase.ts`):
-
-| | |
-|---|---|
-| `t.api(servicio)` | Cliente HTTP de Playwright hacia el servicio, a través de su proxy. `get`, `post`, `put`, `patch`, `delete`, `fetch`, con `data`, `form`, `params`, `headers` y `annotations`. |
-| `t.page()` | Página de Playwright. Todos sus requests llevan las etiquetas del caso y del paso. |
-| `t.url(servicio, ruta)` | URL del servicio por el proxy, para `page.goto()`. |
-| `t.annotate(anotaciones)` | Suma anotaciones al paso actual. |
-| `t.check(expresión, actual, esperado, { response?, expectedFailure? })` | Registra una aserción y sigue. Sin `response`, se une al último request del paso, o al último del caso si el paso no hizo ninguno (por ejemplo, un `then` que revisa la respuesta del `when`). |
-| `t.require(…)` | Igual que `check`, pero detiene el caso si falla. |
-| `t.vars` | Datos compartidos entre pasos. |
+Si dos casos usan el mismo servicio, cada script lo declara con la misma definición. Si las definiciones difieren, `run.ts` falla y dice cuál.
 
 Reglas:
 
@@ -116,33 +133,34 @@ Reglas:
 - Usa las palabras de la persona en `title()`, `given()`, `when()` y `then()`. No inventes reglas de negocio: si algo es ambiguo, pregunta o escribe la lectura más probable y avísale.
 - Los ids `UC-NN` son estables. No renumeres casos existentes.
 - Las aserciones verifican lo que dice el `then`. Si el comportamiento correcto es un error (403, 429, un `errors` de GraphQL), pídelo de forma explícita con `expectedFailure: true`.
-- Las credenciales salen de variables de entorno (`process.env`), nunca escritas en el script.
-- Usa siempre `t.api()` y `t.page()`. No uses `fetch` ni otro cliente: sus requests no llevarían las etiquetas ni pasarían por el proxy.
+- Las credenciales salen de variables de entorno (`process.env`, `fromEnv`), nunca escritas en el script.
+- Usa siempre los servicios declarados y `page()`. No uses `fetch` ni otro cliente: sus requests no llevarían las etiquetas ni pasarían por el proxy.
 - Revisa los tipos con `bun run typecheck` antes de correr.
 
 ### 3. Proveer los servicios
 
-Declara en `services` del reporte cada servicio que usan los casos. **Usa Podman para todo contenedor.** Usa Docker solo si Podman no está instalado, y dilo en el reporte (`proxy.engine`, `run.runtime.engine`).
-
-- **`provisioned`**: lo levantas tú con `podman run -d --rm --name tc-<servicio> …`. Registra `image`, `ports`, `env` (marca las credenciales como sensibles), `dependsOn`, `storage` y los `artifacts` que cargaste (migraciones, seeds, `.proto`, stubs) con su `status`.
-- **`connected`**: es un servicio URL que ya existe (por ejemplo `https://api.example.com`). Registra `host`, `endpoint`, `version` y `tls` si aplica. No lo levantes, no le cargues datos y no lo detengas.
-
-Para cada servicio ejecuta un healthcheck real y guarda el resultado en `health` (`healthy`, `unhealthy` o `timeout`). Agrega a `timeline` los eventos `service.up`, `artifact.apply`, `service.check` y `teardown` con los tiempos que mediste. Si un servicio no queda sano, no ejecutes los casos que dependen de él: deja `run.status: "error"` y explica a la persona qué falló.
-
-#### Proxy de evidencia para servicios URL
-
-Todo servicio `connected` se prueba **a través de un contenedor proxy** que captura cada request y response. Nunca llames al servicio directamente.
+Los servicios salen de los `defineService` de los scripts. **Usa Podman para todo contenedor.** Usa Docker solo si Podman no está instalado, y dilo en el reporte (`proxy.engine`, `run.runtime.engine`).
 
 ```sh
-mkdir -p .testcase/evidence
-podman run -d --rm --name tc-proxy-api -p 18080:8080 \
-  -v "$PWD/.testcase/evidence:/evidence:Z" \
-  docker.io/mitmproxy/mitmproxy:11.0.2 \
-  mitmdump --mode reverse:https://api.example.com --listen-port 8080 \
-  --set hardump=/evidence/api.har
+cd "$WS" && node run.ts --report /ruta/al/proyecto/.testcase/report.json --plan > /tmp/tc-plan.txt
 ```
 
-Usa un proxy y un puerto local por servicio (`18080`, `18081`…) y regístralo en `services[].proxy` (`engine`, `image`, `container`, `listen`, `upstream`, `evidence`). `run.ts` toma `proxy.listen` como URL base del servicio.
+`--plan` pasa al reporte los servicios declarados (`connected` con `host` y `endpoint`; `provisioned` con `image`, `ports`, `env` enmascarado y `dependsOn`), les asigna puertos y un proxy de evidencia a cada servicio HTTP, y escribe en el reporte `services[].proxy`. Imprime tres bloques:
+
+1. **Levantar**: una red de Podman `testcase`, cada contenedor en orden de `dependsOn` (con `--network-alias <nombre>`, así otro contenedor lo alcanza como `postgres:5432`) y un contenedor `mitmdump` por servicio HTTP.
+2. **Detener**: primero los proxies (al detenerse escriben `evidence/<servicio>.har`), después los contenedores y la red.
+3. **Pendiente para el agente**: los artefactos por aplicar y los healthchecks.
+
+Revisa el bloque, córrelo y completa lo pendiente con datos reales:
+
+- Aplica cada artefacto (migraciones, seeds, `.proto`, stubs) y regístralo en `artifacts` con su `status`, `items` y tiempos.
+- Corre cada healthcheck y guarda el resultado en `health` (`healthy`, `unhealthy` o `timeout`). Un servicio conectado se revisa a través de su proxy.
+- Agrega a `timeline` los eventos `service.up`, `artifact.apply`, `service.check` y `teardown` con los tiempos que mediste.
+- Si un servicio no queda sano, no ejecutes los casos que dependen de él: deja `run.status: "error"` y explica a la persona qué falló.
+
+Un servicio `connected` ya existe: no lo levantes, no le cargues datos y no lo detengas. Solo su proxy es tuyo. Agrega `version` y `tls` si los conoces.
+
+Todo servicio HTTP se prueba **a través de su proxy**. Nunca llames al servicio directamente. `run.ts` usa `proxy.listen` como URL base, y avisa si un servicio HTTP no tiene proxy.
 
 ### 4. Correr los casos
 
@@ -155,14 +173,14 @@ node run.ts --report …/report.json --only UC-03                               
 
 Después:
 
-1. Detén cada proxy: `podman stop tc-proxy-api`. mitmdump escribe el HAR al detenerse.
+1. Corre el bloque **Detener** de `--plan`. Los proxies se detienen primero y mitmdump escribe el HAR al detenerse.
 2. Importa la evidencia de cada servicio:
 
    ```sh
    bun <skill>/scripts/import-har.ts .testcase/report.json .testcase/evidence/api.har --service api
    ```
 
-   Agrega un request por entrada del HAR con headers, bodies, estado y tiempos reales. Enmascara los secretos, cambia la URL local por la del servicio, deja `evidence` apuntando a la entrada del HAR y une cada aserción de `run-assertions.json` con su request. Omite las entradas sin caso, las de corridas anteriores y los archivos estáticos del navegador. No duplica si lo corres de nuevo.
+   Agrega un request por entrada del HAR con headers, bodies, estado y tiempos reales. Enmascara los secretos, cambia la URL local por la del servicio, deja `evidence` apuntando a la entrada del HAR y une cada aserción y cada `notation` de `run-assertions.json` con su request. Omite las entradas sin caso, las de corridas anteriores y los archivos estáticos del navegador. No duplica si lo corres de nuevo.
 
 El proxy cubre HTTP y GraphQL. Para gRPC, WebSocket o SQL registra los requests en el JSON desde la salida de la herramienta (`grpcurl`, `websocat`, `psql`), con `evidence.source: "agent"`, sus aserciones y los mismos campos que un request importado.
 
@@ -190,25 +208,24 @@ Al terminar, borra el espacio de trabajo temporal (`rm -rf "$WS"`). Los scripts 
 
 ## Cambios posteriores
 
-- **La persona agrega o cambia un caso**: edita o crea su script, levanta los proxies, corre `run.ts --only UC-NN`, importa, sincroniza y genera el HTML. Una corrida con `--only` reemplaza los requests del reporte: si quieres el reporte completo, corre todos los casos.
+- **La persona agrega o cambia un caso**: edita o crea su script, corre `--plan` si cambió algún servicio, levanta los proxies, corre `run.ts --only UC-NN`, importa, sincroniza y genera el HTML. Una corrida con `--only` reemplaza los requests del reporte: si quieres el reporte completo, corre todos los casos.
 - **La persona quita un caso**: borra su script y su elemento en `useCases`, y vuelve a correr.
 - **Historial**: antes de una corrida nueva, guarda una copia como `.testcase/report-<número>.json` si la persona lo pide.
 
 ## Anotaciones
 
-Anota todos los requests. Sirven para que una persona entienda el reporte sin preguntar.
+Anota todos los requests con `notation(nombre, valor)`. Sirven para que una persona entienda el reporte sin preguntar. `paso` se agrega solo.
 
 | Clave | Cuándo |
 |---|---|
 | `usuario` | Siempre que el request vaya autenticado: email o id de la cuenta. |
 | `perfil` | Rol de esa cuenta: `cliente`, `administrador`, `visitante`, `servicio-interno`… |
-| `paso` | `given`, `when` o `then`. |
 | `tenant` | Si el sistema es multi-tenant. |
 | `nota` | Por qué existe el request, si no es obvio. |
 | `intento` | Número de reintento. |
 | `fixture` | Dato de prueba que se usó. |
 
-Las claves van en minúsculas (se permiten tildes y ñ), con `-` o `_` y un máximo de 64 caracteres. **Nunca** pongas secretos en una anotación: los headers y bodies se enmascaran, las anotaciones no.
+Las claves van en minúsculas (se permiten tildes, ñ y espacios), con `-` o `_` y un máximo de 64 caracteres, por ejemplo `time alive`. Un valor que no es texto, número ni booleano se guarda como JSON. **Nunca** pongas secretos en una anotación: los headers y bodies se enmascaran, las anotaciones no.
 
 ## Secretos
 

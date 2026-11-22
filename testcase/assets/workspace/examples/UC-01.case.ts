@@ -1,31 +1,55 @@
 // Ejemplo: copia este archivo a cases/ y ajústalo. Un archivo por caso de uso; el id sale del nombre (UC-01).
-import { defineCase, title, annotations, given, when, then } from "../testcase.ts";
+// El script es autocontenido: importa lo que usa y declara sus servicios.
+import { defineCase, defineService, fromEnv, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";
+
+// Servicio URL que ya existe: sus requests pasan por el proxy de evidencia.
+const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
+
+// Contenedor que se levanta con Podman, con sus migraciones y seeds.
+const db = defineService({
+  name: "postgres",
+  image: "docker.io/library/postgres:16.4-alpine",
+  ports: [{ container: 5432 }],
+  env: { POSTGRES_DB: "pedidos_test", POSTGRES_PASSWORD: fromEnv("PG_PASSWORD") },
+  storage: "tmpfs",
+  artifacts: [
+    { kind: "migration", source: "./db/migrations/*.sql" },
+    { kind: "seed", source: "./db/seeds/usuarios.sql" },
+  ],
+  health: "pg_isready",
+});
 
 export default defineCase(() => {
   title(() => "Cliente no puede cancelar un pedido ajeno");
-  annotations({ tenant: "tienda-norte" });
+  notation("tenant", "tienda-norte"); // anotación de todo el caso
+  notation("db", db.name);
 
-  given("un pedido creado por María", { usuario: "pedro@acme.test", perfil: "cliente" }, async (t) => {
-    const login = await t.api("api").post("/v1/auth/token", {
+  given("un pedido creado por María", async () => {
+    notation("usuario", "pedro@acme.test"); // antes del request: la lleva el request que sigue
+    notation("perfil", "cliente");
+    const login = await api.post("/v1/auth/token", {
       data: { email: "pedro@acme.test", password: process.env.PEDRO_PASSWORD ?? "" },
     });
-    t.require("status == 200", login.status(), 200, { response: login });
-    t.vars.token = (await login.json()).access_token;
+    ensure("status == 200", login.status(), 200);
+    const body = await login.json();
+    vars.token = body.access_token;
+    notation("rol", body.user.role); // después del request: se une a ese request
   });
 
-  when("Pedro intenta cancelarlo", { usuario: "pedro@acme.test", perfil: "cliente", "dueño-del-recurso": "maria@acme.test" }, async (t) => {
-    t.vars.cancel = await t.api("api").delete("/v1/orders/ord_01JD9", {
-      headers: { authorization: `Bearer ${t.vars.token}` },
-    });
+  when("Pedro intenta cancelarlo", async () => {
+    notation("usuario", "pedro@acme.test");
+    notation("dueño del recurso", "maria@acme.test");
+    vars.cancel = await api.delete("/v1/orders/ord_01JD9", { headers: { authorization: `Bearer ${vars.token}` } });
   });
 
-  then("la API responde 403", async (t) => {
-    t.check("status == 403", t.vars.cancel.status(), 403, { response: t.vars.cancel, expectedFailure: true });
+  then("la API responde 403", () => {
+    check("status == 403", vars.cancel.status(), 403, { expectedFailure: true });
   });
 
-  then("el pedido sigue en estado pending", { usuario: "maria@acme.test", perfil: "cliente" }, async (t) => {
-    const page = await t.page();
-    await page.goto(t.url("api", "/pedidos/ord_01JD9"));
-    t.check('estado visible == "pending"', await page.locator("[data-estado]").textContent(), "pending");
+  then("el pedido sigue en estado pending", async () => {
+    notation("usuario", "maria@acme.test");
+    const p = await page();
+    await p.goto(api.url("/pedidos/ord_01JD9"));
+    check('estado visible == "pending"', await p.locator("[data-estado]").textContent(), "pending");
   });
 });

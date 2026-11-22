@@ -178,7 +178,7 @@ await ctx.http.post("/v1/orders", {
 });
 ```
 
-- Las claves usan minúsculas (con tildes y ñ), números, `-` y `_`, con un máximo de 64 caracteres. Por ejemplo, `dueño-del-recurso`.
+- Las claves usan minúsculas (con tildes y ñ), números, espacios, `-` y `_`, con un máximo de 64 caracteres. Por ejemplo, `dueño del recurso` o `time alive`. En los scripts se definen con `notation("time alive", valor)`.
 - Los valores son string, number o boolean.
 - testmania no las interpreta, solo las guarda y las muestra. Las claves más comunes en la práctica son `usuario`, `perfil`, `tenant`, `paso`, `nota`, `intento` y `fixture`.
 - Las anotaciones no deben llevar secretos. testmania no las enmascara.
@@ -208,6 +208,7 @@ Campos de `provisioned`:
 | `storage` | `tmpfs` \| `volume` \| `none` | no | Almacenamiento del contenedor. |
 | `readyMs` | number | no | Tiempo hasta quedar listo, con los artefactos aplicados. |
 | `artifacts` | [Artifact](#artifact)[] | sí | Artefactos provisionados. Puede ser `[]`. |
+| `proxy` | igual que en `connected` | no | Proxy de evidencia delante del contenedor, si el servicio habla HTTP. `upstream` apunta al puerto publicado del contenedor. |
 
 Campos de `connected`:
 
@@ -913,7 +914,7 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
       "description": "Pares clave/valor libres definidos por el desarrollador. testmania no los interpreta.",
       "type": "object",
       "propertyNames": {
-        "pattern": "^[a-z0-9áéíóúñü][a-z0-9áéíóúñü_-]*$",
+        "pattern": "^[a-z0-9áéíóúñü][a-z0-9áéíóúñü _-]*$",
         "maxLength": 64
       },
       "additionalProperties": {
@@ -1756,6 +1757,42 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
               "type": "array",
               "items": {
                 "$ref": "#/$defs/artifact"
+              }
+            },
+            "proxy": {
+              "type": "object",
+              "required": [
+                "image",
+                "listen",
+                "upstream"
+              ],
+              "additionalProperties": false,
+              "description": "Contenedor proxy que captura la evidencia de los requests hacia este servicio. En un servicio provisionado, solo si habla HTTP.",
+              "properties": {
+                "engine": {
+                  "enum": [
+                    "podman",
+                    "docker"
+                  ],
+                  "default": "podman"
+                },
+                "image": {
+                  "type": "string"
+                },
+                "container": {
+                  "type": "string"
+                },
+                "listen": {
+                  "type": "string",
+                  "description": "Dirección local a la que se envían los requests, por ejemplo http://localhost:18080."
+                },
+                "upstream": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "string",
+                  "description": "Archivo de evidencia que escribe el proxy, relativo al reporte."
+                }
               }
             }
           },

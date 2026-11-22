@@ -1,27 +1,29 @@
 /**
  * testcase.ts
  *
- * Librería de casos de uso. El agente escribe un archivo por caso en `cases/UC-NN.case.ts`:
+ * Librería de casos de uso. Cada caso es un script autocontenido en `cases/UC-NN.case.ts`: importa todo lo que
+ * necesita desde aquí y declara los servicios que usa con `defineService`.
  *
- *   import { defineCase, title, annotations, given, when, then } from "../testcase.ts";
+ *   import { defineCase, defineService, title, given, when, then, check, vars } from "../testcase.ts";
+ *
+ *   const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
  *
  *   export default defineCase(() => {
- *     title(() => "Cliente no puede cancelar un pedido ajeno");
- *     annotations({ tenant: "tienda-norte" });
- *
- *     given("un pedido creado por María", { usuario: "pedro@acme.test" }, async (t) => { … });
- *     when("Pedro intenta cancelarlo", async (t) => { … });
- *     then("la API responde 403", async (t) => { … });
- *     then("el pedido sigue en estado pending", async (t) => { … });
+ *     title("Cliente no puede cancelar un pedido ajeno");
+ *     given("un pedido creado por María", { usuario: "pedro@acme.test" }, async () => { … });
+ *     when("Pedro intenta cancelarlo", async () => { vars.res = await api.delete("/v1/orders/ord_01JD9"); });
+ *     then("la API responde 403", () => { check("status == 403", vars.res.status(), 403, { expectedFailure: true }); });
  *   });
  *
  * `defineCase` llama a su función una vez, al cargar el archivo, para registrar el título y los pasos.
- * Los pasos se ejecutan después, en el orden en que se declaran, y cada uno recibe el contexto `t`.
+ * Los pasos se ejecutan después, en el orden en que se declaran. Cada paso recibe el contexto `t`, y también puede
+ * usar las utilidades importadas (`check`, `ensure`, `notation`, `page`, `vars`) y los métodos de sus servicios.
  * El id sale del nombre del archivo (`UC-03.case.ts` → `UC-03`) o de `id("UC-03")`.
  *
- * Cada request que hace el caso (con `t.api()` o con el navegador de `t.page()`) pasa por el proxy del servicio
+ * Cada request (de un servicio, de `t.api()` o del navegador de `page()`) pasa por el proxy de evidencia
  * y lleva headers `x-testcase-*` para que `import-har.ts` lo asocie al caso, a su paso, a sus anotaciones y a sus aserciones.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { APIRequestContext, APIResponse, Browser, BrowserContext, Page } from "playwright";
@@ -76,8 +78,8 @@ export interface CaseContext {
   url(service: string, path?: string): string;
   /** Marca el inicio de un paso (given, when, then) y sus anotaciones. */
   step(paso: Paso, annotations?: Annotations): Promise<void>;
-  /** Suma anotaciones al paso actual. */
-  annotate(annotations: Annotations): Promise<void>;
+  /** Define una anotación y devuelve el valor. Ver `notation()`. */
+  notation<T>(name: string, value: T, opts?: NotationOptions): T;
   /** Registra una aserción. Devuelve si pasó. No lanza: el caso sigue corriendo. */
   check(expression: string, actual: unknown, expected: unknown, opts?: CheckOptions): boolean;
   /** Igual que `check`, pero detiene el caso si falla. */
@@ -95,7 +97,6 @@ type Text = string | (() => string);
 export interface CaseStep {
   paso: Paso;
   description: string;
-  annotations?: Annotations;
   fn?: StepFn;
 }
 
@@ -160,10 +161,12 @@ export function defineCase(build: () => void): CaseDefinition {
     annotations: Object.keys(d.annotations).length ? d.annotations : undefined,
     steps,
     async run(t) {
-      for (const s of steps) {
-        await t.step(s.paso, s.annotations);
-        if (s.fn) await s.fn(t);
-      }
+      await active.run(t, async () => {
+        for (const s of steps) {
+          await t.step(s.paso);
+          if (s.fn) await s.fn(t);
+        }
+      });
     },
   };
 }
@@ -180,39 +183,192 @@ export function id(value: string): void {
   current("id").id = text(value, "id");
 }
 
-/** Anotaciones de todo el caso (por ejemplo `{ tenant: "tienda-norte" }`). Se suman si se llama más de una vez. */
-export function annotations(value: Annotations): void {
-  Object.assign(current("annotations").annotations, value);
-}
-
-function addStep(paso: Paso, description: Text, a?: Annotations | StepFn, b?: StepFn): void {
+function addStep(paso: Paso, description: Text, fn?: StepFn): void {
   const d = current(paso);
-  const fn = typeof a === "function" ? a : b;
-  const ann = typeof a === "object" && a !== null ? a : undefined;
-  if (fn !== undefined && typeof fn !== "function") throw new Error(`${paso}(): el último argumento debe ser una función.`);
-  d.steps.push({ paso, description: text(description, paso), ...(ann ? { annotations: ann } : {}), ...(fn ? { fn } : {}) });
+  if (fn !== undefined && typeof fn !== "function") throw new Error(`${paso}(): el segundo argumento debe ser una función.`);
+  d.steps.push({ paso, description: text(description, paso), ...(fn ? { fn } : {}) });
 }
 
-/** Paso given: prepara el estado. `given(texto, fn)` o `given(texto, anotaciones, fn)`. */
-export function given(description: Text, fn?: StepFn): void;
-export function given(description: Text, annotations: Annotations, fn?: StepFn): void;
-export function given(description: Text, a?: Annotations | StepFn, b?: StepFn): void {
-  addStep("given", description, a, b);
+/** Paso given: prepara el estado. */
+export function given(description: Text, fn?: StepFn): void {
+  addStep("given", description, fn);
 }
 
-/** Paso when: la acción que se prueba. `when(texto, fn)` o `when(texto, anotaciones, fn)`. */
-export function when(description: Text, fn?: StepFn): void;
-export function when(description: Text, annotations: Annotations, fn?: StepFn): void;
-export function when(description: Text, a?: Annotations | StepFn, b?: StepFn): void {
-  addStep("when", description, a, b);
+/** Paso when: la acción que se prueba. */
+export function when(description: Text, fn?: StepFn): void {
+  addStep("when", description, fn);
 }
 
-/** Paso then: lo que se verifica. `then(texto, fn)` o `then(texto, anotaciones, fn)`. */
-export function then(description: Text, fn?: StepFn): void;
-export function then(description: Text, annotations: Annotations, fn?: StepFn): void;
-export function then(description: Text, a?: Annotations | StepFn, b?: StepFn): void {
-  addStep("then", description, a, b);
+/** Paso then: lo que se verifica. */
+export function then(description: Text, fn?: StepFn): void {
+  addStep("then", description, fn);
 }
+
+/* ---------- servicios: defineService ---------- */
+
+/** Variable de entorno con un secreto. En el reporte queda enmascarada. */
+export interface FromEnv {
+  fromEnv: string;
+}
+/** Lee el valor de una variable de entorno del host al levantar el servicio. Se marca como sensible. */
+export function fromEnv(name: string): FromEnv {
+  return { fromEnv: name };
+}
+
+export interface ArtifactDefinition {
+  kind: "migration" | "seed" | "proto" | "stub" | "file";
+  source: string;
+  description?: string;
+}
+
+interface ServiceBase {
+  /** Nombre del servicio en el reporte. */
+  name: string;
+  /** Healthcheck que corre el agente (por ejemplo `GET /healthz` o `pg_isready`). */
+  health?: string;
+}
+
+/** Servicio que ya existe (por ejemplo `https://api.example.com`). No se levanta ni se le cargan datos. */
+export interface ConnectedServiceDefinition extends ServiceBase {
+  endpoint: string;
+  version?: string;
+}
+
+/** Servicio que se levanta con Podman, con sus artefactos (migraciones, seeds…). */
+export interface ProvisionedServiceDefinition extends ServiceBase {
+  image: string;
+  /** Puertos del contenedor. Sin `host`, se asigna uno libre desde 55000. */
+  ports?: Array<{ container: number; host?: number; protocol?: string }>;
+  env?: Record<string, string | FromEnv>;
+  dependsOn?: Array<string | Service>;
+  storage?: "tmpfs" | "volume" | "none";
+  artifacts?: ArtifactDefinition[];
+  /** El servicio habla HTTP: sus requests pasan por el proxy de evidencia. Por defecto false. */
+  http?: boolean;
+}
+
+export type ServiceDefinition = ConnectedServiceDefinition | ProvisionedServiceDefinition;
+
+/** Servicio declarado en el script. Sus métodos HTTP pasan por el proxy y quedan como evidencia del caso. */
+export interface Service extends Api {
+  readonly name: string;
+  readonly definition: ServiceDefinition;
+  /** URL del servicio a través de su proxy, para `page.goto()`. */
+  url(path?: string): string;
+}
+
+const declared = new Map<string, ServiceDefinition>();
+
+/** Servicios declarados con defineService en los scripts cargados. Lo usa run.ts. */
+export function declaredServices(): ServiceDefinition[] {
+  return [...declared.values()];
+}
+
+/**
+ * Declara un servicio que usa el caso. Va en el mismo script (o en un módulo que el script importa).
+ *
+ *   const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
+ *   const db = defineService({ name: "postgres", image: "docker.io/library/postgres:16.4-alpine", ports: [{ container: 5432 }] });
+ */
+export function defineService(def: ServiceDefinition): Service {
+  if (!def?.name) throw new Error("defineService() necesita un name.");
+  const isConnected = "endpoint" in def && !!def.endpoint;
+  const isProvisioned = "image" in def && !!def.image;
+  if (isConnected === isProvisioned) throw new Error(`defineService("${def.name}"): declara endpoint (servicio conectado) o image (servicio provisionado), uno de los dos.`);
+  const prev = declared.get(def.name);
+  if (prev && !isDeepStrictEqual(normalizeDef(prev), normalizeDef(def))) {
+    throw new Error(`El servicio "${def.name}" está declarado dos veces con definiciones distintas. Usa la misma definición en todos los scripts que lo declaran.`);
+  }
+  declared.set(def.name, def);
+  const http = (): Api => context("las llamadas a un servicio").api(def.name);
+  return {
+    name: def.name,
+    definition: def,
+    url: (path) => context("url()").url(def.name, path),
+    get: (p, o) => http().get(p, o),
+    post: (p, o) => http().post(p, o),
+    put: (p, o) => http().put(p, o),
+    patch: (p, o) => http().patch(p, o),
+    delete: (p, o) => http().delete(p, o),
+    fetch: (p, o) => http().fetch(p, o),
+  };
+}
+
+function normalizeDef(def: ServiceDefinition): unknown {
+  const d: any = { ...def };
+  if (Array.isArray(d.dependsOn)) d.dependsOn = d.dependsOn.map((x: any) => (typeof x === "string" ? x : x.name));
+  return d;
+}
+
+/* ---------- utilidades para usar dentro de los pasos sin `t` ---------- */
+
+const active = new AsyncLocalStorage<CaseContext>();
+
+function context(what: string): CaseContext {
+  const t = active.getStore();
+  if (!t) throw new Error(`${what} solo funciona dentro de un paso: given(), when() o then().`);
+  return t;
+}
+
+/** Registra una aserción y sigue. Igual que `t.check`. */
+export function check(expression: string, actual: unknown, expected: unknown, opts?: CheckOptions): boolean {
+  return context("check()").check(expression, actual, expected, opts);
+}
+
+/** Registra una aserción y detiene el caso si falla. Igual que `t.require`. */
+export function ensure(expression: string, actual: unknown, expected: unknown, opts?: CheckOptions): void {
+  context("ensure()").require(expression, actual, expected, opts);
+}
+
+/** Página de Playwright del caso. Igual que `t.page()`. */
+export function page(): Promise<Page> {
+  return context("page()").page();
+}
+
+/**
+ * Define una anotación y devuelve el valor, para usarlo en la misma línea:
+ *
+ *   const timeAlive = notation("time alive", res.body.timeAlive);
+ *
+ * - En el cuerpo de defineCase (fuera de los pasos): anotación de todo el caso, por ejemplo `notation("tenant", "tienda-norte")`.
+ * - En un paso, después de un request: se une a ese request (o al de `{ response }`).
+ * - En un paso, antes de cualquier request: la llevan los requests que siguen en ese paso, por ejemplo `notation("usuario", "pedro@acme.test")`.
+ */
+export function notation<T>(name: string, value: T, opts?: NotationOptions): T {
+  const t = active.getStore();
+  if (t) return t.notation(name, value, opts);
+  if (draft) {
+    draft.annotations[annotationKey(name)] = annotationValue(value);
+    return value;
+  }
+  throw new Error("notation() solo se usa dentro de defineCase(() => { … }) o de un paso.");
+}
+
+export interface NotationOptions {
+  /** Request al que pertenece la anotación. Si se omite: el último request del paso actual. */
+  response?: TrackedResponse;
+}
+
+const KEY = /^[a-z0-9áéíóúñü][a-z0-9áéíóúñü _-]*$/;
+function annotationKey(name: string): string {
+  const k = String(name).trim().toLowerCase();
+  if (!KEY.test(k) || k.length > 64) throw new Error(`notation("${name}"): el nombre usa letras, números, espacios, - o _ (hasta 64).`);
+  return k;
+}
+function annotationValue(v: unknown): string | number | boolean {
+  if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
+  return JSON.stringify(v) ?? String(v);
+}
+
+/** Datos compartidos entre los pasos del caso que está corriendo. Igual que `t.vars`. */
+export const vars: Record<string, any> = new Proxy({} as Record<string, any>, {
+  get: (_, k) => context("vars").vars[k as string],
+  set: (_, k, v) => ((context("vars").vars[k as string] = v), true),
+  has: (_, k) => k in context("vars").vars,
+  deleteProperty: (_, k) => delete context("vars").vars[k as string],
+  ownKeys: () => Reflect.ownKeys(context("vars").vars),
+  getOwnPropertyDescriptor: (_, k) => Reflect.getOwnPropertyDescriptor(context("vars").vars, k),
+});
 
 /* ---------- implementación usada por run.ts ---------- */
 
@@ -224,6 +380,12 @@ export interface RecordedCheck {
   expected: unknown;
   actual: unknown;
   expectedFailure?: boolean;
+}
+
+export interface RecordedNotation {
+  tag: string;
+  name: string;
+  value: string | number | boolean;
 }
 
 export interface ServiceTarget {
@@ -245,13 +407,15 @@ export function createContext(opts: {
   newApi: (baseURL: string) => Promise<APIRequestContext>;
   getBrowser: () => Promise<Browser>;
   checks: RecordedCheck[];
+  notations: RecordedNotation[];
   requestTags: string[];
 }) {
-  const { def, services, checks, requestTags } = opts;
+  const { def, services, checks, notations, requestTags } = opts;
   let paso: Paso = "given";
   let stepTag = randomUUID();
   let stepAnnotations: Annotations = {};
   let lastRequestTag: string | undefined;
+  let pendingHeaders: Promise<void> = Promise.resolve();
   /** Último request del caso, de cualquier paso: un then() sin requests verifica lo que trajo el when(). */
   let lastCaseRequestTag: string | undefined;
   let browserContext: BrowserContext | undefined;
@@ -280,6 +444,7 @@ export function createContext(opts: {
   function api(service: string): Api {
     const s = target(service);
     const call = async (method: string, path: string, o: RequestOptions = {}): Promise<TrackedResponse> => {
+      await pendingHeaders;
       let ctx = apis.get(service);
       if (!ctx) {
         ctx = await opts.newApi(s.baseURL);
@@ -342,6 +507,7 @@ export function createContext(opts: {
   const t: CaseContext = {
     api,
     async page() {
+      await pendingHeaders;
       if (!page) {
         const browser = await opts.getBrowser();
         browserContext = await browser.newContext({ extraHTTPHeaders: stepHeaders() });
@@ -353,15 +519,23 @@ export function createContext(opts: {
       return new URL(path, target(service).baseURL).toString();
     },
     async step(p, annotations) {
+      await pendingHeaders;
       paso = p;
       stepAnnotations = annotations ?? {};
       stepTag = randomUUID();
       lastRequestTag = undefined;
       await refreshBrowserHeaders();
     },
-    async annotate(annotations) {
-      stepAnnotations = { ...stepAnnotations, ...annotations };
-      await refreshBrowserHeaders();
+    notation(name, value, o = {}) {
+      const key = annotationKey(name);
+      const v = annotationValue(value);
+      const tag = o.response?.tag ?? lastRequestTag;
+      if (tag) notations.push({ tag, name: key, value: v });
+      else {
+        stepAnnotations = { ...stepAnnotations, [key]: v };
+        pendingHeaders = refreshBrowserHeaders();
+      }
+      return value;
     },
     check,
     require(expression, actual, expected, o) {
