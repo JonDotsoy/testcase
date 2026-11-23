@@ -1,0 +1,3558 @@
+{
+  "$schema": "https://testmania.dev/schemas/report/1.0.json",
+  "reportVersion": "1.0",
+  "tool": {
+    "name": "testmania",
+    "version": "1.0.0"
+  },
+  "run": {
+    "id": "run_148",
+    "number": 148,
+    "command": "testcase (agente)",
+    "mode": "local",
+    "status": "failed",
+    "exitCode": 1,
+    "startedAt": "2026-11-22T15:10:04.120Z",
+    "finishedAt": "2026-11-22T15:10:11.470Z",
+    "durationMs": 7350,
+    "secretsIncluded": false,
+    "runtime": {
+      "engine": "podman",
+      "version": "5.2.1"
+    }
+  },
+  "manifest": {
+    "path": "testmania.yaml",
+    "version": "1.0",
+    "suite": "api-pedidos",
+    "envFiles": [
+      ".env.test"
+    ]
+  },
+  "summary": {
+    "useCases": {
+      "total": 9,
+      "passed": 6,
+      "failed": 2,
+      "pending": 1
+    },
+    "requests": {
+      "total": 24,
+      "byProtocol": {
+        "http": 15,
+        "grpc": 4,
+        "sql": 1,
+        "ws": 2,
+        "graphql": 2
+      }
+    },
+    "assertions": {
+      "total": 44,
+      "passed": 41,
+      "failed": 3
+    },
+    "phases": {
+      "provisioningMs": 3460,
+      "buildMs": 518,
+      "testsMs": 2690,
+      "teardownMs": 650
+    }
+  },
+  "useCases": [
+    {
+      "id": "UC-01",
+      "title": "Cliente crea un pedido",
+      "status": "passed",
+      "given": "un cliente autenticado con stock disponible de 2 productos",
+      "when": "crea un pedido con ambos productos",
+      "then": "el pedido queda en estado pending y el stock queda reservado",
+      "handler": {
+        "file": "tests/pedidos/crear-pedido.handler.ts"
+      },
+      "startOffsetMs": 4010,
+      "durationMs": 284,
+      "requestIds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "invocations": [
+        {
+          "protocol": "http",
+          "method": "POST",
+          "target": "/v1/auth/token",
+          "count": 1
+        },
+        {
+          "protocol": "grpc",
+          "method": "GetStock",
+          "target": "inventory.v1.InventoryService/GetStock",
+          "count": 2
+        },
+        {
+          "protocol": "http",
+          "method": "POST",
+          "target": "/v1/orders",
+          "count": 1
+        },
+        {
+          "protocol": "sql",
+          "method": "SELECT",
+          "target": "orders WHERE id = $1",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "UC-02",
+      "title": "Cliente consulta su pedido",
+      "status": "passed",
+      "given": "un pedido existente del cliente",
+      "when": "consulta el pedido dos veces",
+      "then": "la segunda respuesta usa caché (304 con ETag)",
+      "handler": {
+        "file": "tests/pedidos/consultar-pedido.handler.ts"
+      },
+      "startOffsetMs": 4310,
+      "durationMs": 45,
+      "requestIds": [
+        6,
+        7
+      ],
+      "invocations": [
+        {
+          "protocol": "http",
+          "method": "GET",
+          "target": "/v1/orders/ord_01JD3K8Q2Z7W4M",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "id": "UC-03",
+      "title": "Cliente no puede cancelar un pedido ajeno",
+      "status": "passed",
+      "given": "un pedido creado por otro cliente",
+      "when": "intenta cancelarlo",
+      "then": "la API responde 403 y el pedido no cambia",
+      "handler": {
+        "file": "tests/pedidos/cancelar-ajeno.handler.ts"
+      },
+      "startOffsetMs": 4362,
+      "durationMs": 104,
+      "requestIds": [
+        8,
+        9
+      ],
+      "invocations": [
+        {
+          "protocol": "http",
+          "method": "POST",
+          "target": "/v1/auth/token",
+          "count": 1
+        },
+        {
+          "protocol": "http",
+          "method": "DELETE",
+          "target": "/v1/orders/ord_01JD3K8Q2Z7W4M",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "UC-04",
+      "title": "Administrador cambia el estado de un pedido",
+      "status": "passed",
+      "given": "un administrador y un suscriptor de eventos conectado",
+      "when": "marca el pedido como shipped",
+      "then": "el suscriptor recibe el evento order.status_changed",
+      "handler": {
+        "file": "tests/admin/cambiar-estado.handler.ts"
+      },
+      "startOffsetMs": 4475,
+      "durationMs": 1240,
+      "requestIds": [
+        10,
+        11,
+        12,
+        13
+      ],
+      "invocations": [
+        {
+          "protocol": "ws",
+          "method": "CONNECT",
+          "target": "wss://api.example.com/v1/events",
+          "count": 1
+        },
+        {
+          "protocol": "http",
+          "method": "POST",
+          "target": "/v1/auth/token",
+          "count": 1
+        },
+        {
+          "protocol": "http",
+          "method": "PATCH",
+          "target": "/v1/orders/ord_01JD3K8Q2Z7W4M/status",
+          "count": 1
+        },
+        {
+          "protocol": "ws",
+          "method": "MESSAGE",
+          "target": "← order.status_changed",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "UC-05",
+      "title": "Buscar productos en el catálogo",
+      "status": "passed",
+      "given": "un catálogo con productos de café",
+      "when": "busca \"etiopía\" por GraphQL",
+      "then": "recibe solo productos que coinciden y un campo inválido devuelve errors",
+      "handler": {
+        "file": "tests/catalogo/buscar.handler.ts"
+      },
+      "startOffsetMs": 5730,
+      "durationMs": 73,
+      "requestIds": [
+        14,
+        15
+      ],
+      "invocations": [
+        {
+          "protocol": "graphql",
+          "method": "QUERY",
+          "target": "SearchProducts",
+          "count": 1
+        },
+        {
+          "protocol": "graphql",
+          "method": "QUERY",
+          "target": "SearchProductsInvalid",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "UC-06",
+      "title": "Reservar stock sin disponibilidad devuelve error",
+      "status": "failed",
+      "given": "un producto con 2 unidades en stock",
+      "when": "se reservan 5 unidades",
+      "then": "inventory responde FAILED_PRECONDITION",
+      "handler": {
+        "file": "tests/inventario/reserva-sin-stock.handler.ts"
+      },
+      "startOffsetMs": 5810,
+      "durationMs": 26,
+      "requestIds": [
+        16,
+        17
+      ],
+      "invocations": [
+        {
+          "protocol": "grpc",
+          "method": "SetStock",
+          "target": "inventory.v1.InventoryService/SetStock",
+          "count": 1
+        },
+        {
+          "protocol": "grpc",
+          "method": "ReserveStock",
+          "target": "inventory.v1.InventoryService/ReserveStock",
+          "count": 1
+        }
+      ],
+      "failure": {
+        "explanation": "Se esperaba el código gRPC FAILED_PRECONDITION (9) y el servicio respondió OK (0). El stock era 2 y la reserva de 5 unidades fue aceptada, dejando available: -3. Revisa la validación de cantidad en InventoryService/ReserveStock.",
+        "requestIds": [
+          17
+        ],
+        "assertionIds": [
+          "r17.a1",
+          "r17.a2"
+        ]
+      }
+    },
+    {
+      "id": "UC-07",
+      "title": "Pago rechazado deja el pedido en payment_failed",
+      "status": "failed",
+      "given": "un pedido pending y una tarjeta que el proveedor rechaza",
+      "when": "se intenta pagar",
+      "then": "el pedido pasa a payment_failed",
+      "handler": {
+        "file": "tests/pagos/pago-rechazado.handler.ts"
+      },
+      "startOffsetMs": 5845,
+      "durationMs": 582,
+      "requestIds": [
+        18,
+        19,
+        20
+      ],
+      "invocations": [
+        {
+          "protocol": "http",
+          "method": "POST",
+          "target": "/v1/orders",
+          "count": 1
+        },
+        {
+          "protocol": "http",
+          "method": "POST",
+          "target": "/v1/orders/ord_01JD3KC4N1P8VX/payments",
+          "count": 1
+        },
+        {
+          "protocol": "http",
+          "method": "GET",
+          "target": "/v1/orders/ord_01JD3KC4N1P8VX",
+          "count": 1
+        }
+      ],
+      "failure": {
+        "explanation": "El pago respondió 402 como se esperaba, pero el pedido siguió en \"pending\" en vez de \"payment_failed\". La aserción falló en body.status del request #20.",
+        "requestIds": [
+          20
+        ],
+        "assertionIds": [
+          "r20.a2"
+        ]
+      }
+    },
+    {
+      "id": "UC-08",
+      "title": "Listar pedidos con paginación",
+      "status": "pending",
+      "given": "un cliente con 25 pedidos",
+      "when": "pide la página 2 con limit=10",
+      "then": "recibe 10 pedidos y un cursor a la página 3",
+      "handler": {
+        "file": "tests/pedidos/listar-paginado.handler.ts"
+      },
+      "requestIds": [],
+      "invocations": [],
+      "pending": {
+        "reason": "handler-not-implemented",
+        "message": "El handler se generó con su estructura pero todavía no tiene implementación. No se ejecutó ningún request."
+      }
+    },
+    {
+      "id": "UC-09",
+      "title": "Login se bloquea tras intentos fallidos",
+      "status": "passed",
+      "given": "un usuario existente",
+      "when": "falla la contraseña 3 veces y vuelve a intentar",
+      "then": "el cuarto intento recibe 429 con Retry-After",
+      "handler": {
+        "file": "tests/auth/rate-limit.handler.ts"
+      },
+      "startOffsetMs": 6440,
+      "durationMs": 250,
+      "requestIds": [
+        21,
+        22,
+        23,
+        24
+      ],
+      "invocations": [
+        {
+          "protocol": "http",
+          "method": "POST",
+          "target": "/v1/auth/token",
+          "count": 4
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "id": 1,
+      "useCaseId": "UC-01",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "POST",
+      "target": "/v1/auth/token",
+      "url": "https://api.example.com/v1/auth/token",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 4010,
+      "durationMs": 84,
+      "passed": true,
+      "handler": {
+        "file": "tests/pedidos/crear-pedido.handler.ts",
+        "line": 14
+      },
+      "annotations": {
+        "usuario": "maria.gonzalez@acme.test",
+        "perfil": "cliente",
+        "tenant": "tienda-norte",
+        "paso": "given"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "user-agent",
+            "value": "testmania/1.0.0"
+          },
+          {
+            "name": "x-testmania-run",
+            "value": "run_148"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "email": "maria.gonzalez@acme.test",
+            "password": "••••",
+            "grant_type": "password"
+          },
+          "contentType": "application/json",
+          "redactions": [
+            {
+              "path": "$.password",
+              "secretRef": "sec_3"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "200 OK",
+          "code": 200,
+          "reason": "OK"
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json; charset=utf-8"
+          },
+          {
+            "name": "cache-control",
+            "value": "no-store"
+          },
+          {
+            "name": "set-cookie",
+            "value": "refresh=••••; HttpOnly; Secure; SameSite=Strict",
+            "sensitive": true,
+            "secretRef": "sec_1"
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2a91c4"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "access_token": "••••",
+            "token_type": "Bearer",
+            "expires_in": 900,
+            "user": {
+              "id": "usr_1042",
+              "role": "customer",
+              "tenant": "tienda-norte"
+            }
+          },
+          "contentType": "application/json",
+          "redactions": [
+            {
+              "path": "$.access_token",
+              "secretRef": "sec_2"
+            }
+          ]
+        },
+        "sizeBytes": 612
+      },
+      "assertions": [
+        {
+          "id": "r1.a1",
+          "expression": "status == 200",
+          "passed": true
+        },
+        {
+          "id": "r1.a2",
+          "expression": "body.user.role == \"customer\"",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X POST 'https://api.example.com/v1/auth/token' \\\n  -H 'content-type: application/json' \\\n  -H 'accept: application/json' \\\n  -H 'x-testmania-run: run_148' \\\n  -d '{\"email\":\"maria.gonzalez@acme.test\",\"password\":\"••••••••\",\"grant_type\":\"password\"}'",
+        "env": []
+      }
+    },
+    {
+      "id": 2,
+      "useCaseId": "UC-01",
+      "protocol": "grpc",
+      "transport": "HTTP/2 unary",
+      "method": "GetStock",
+      "target": "inventory.v1.InventoryService/GetStock",
+      "url": "grpc://localhost:50051/inventory.v1.InventoryService/GetStock",
+      "services": [
+        "inventory"
+      ],
+      "startOffsetMs": 4102,
+      "durationMs": 12,
+      "passed": true,
+      "handler": {
+        "file": "tests/pedidos/crear-pedido.handler.ts",
+        "line": 19
+      },
+      "annotations": {
+        "perfil": "servicio-interno",
+        "paso": "given",
+        "nota": "stock inicial"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/grpc+proto"
+          },
+          {
+            "name": ":authority",
+            "value": "localhost:50051"
+          },
+          {
+            "name": "grpc-timeout",
+            "value": "5S"
+          },
+          {
+            "name": "x-service-token",
+            "value": "svc_••••",
+            "sensitive": true,
+            "secretRef": "sec_4"
+          },
+          {
+            "name": "x-testmania-run",
+            "value": "run_148"
+          }
+        ],
+        "body": {
+          "encoding": "protobuf-json",
+          "value": {
+            "skus": [
+              "CAF-ETI-250",
+              "TAZ-CER-01"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "grpc",
+          "label": "0 OK",
+          "code": 0,
+          "name": "OK",
+          "message": ""
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/grpc+proto"
+          },
+          {
+            "name": "server",
+            "value": "inventory-svc/0.9.3"
+          }
+        ],
+        "trailers": [
+          {
+            "name": "grpc-status",
+            "value": "0"
+          },
+          {
+            "name": "grpc-message",
+            "value": ""
+          }
+        ],
+        "body": {
+          "encoding": "protobuf-json",
+          "value": {
+            "items": [
+              {
+                "sku": "CAF-ETI-250",
+                "available": 14,
+                "reserved": 0
+              },
+              {
+                "sku": "TAZ-CER-01",
+                "available": 6,
+                "reserved": 0
+              }
+            ]
+          }
+        },
+        "sizeBytes": 148
+      },
+      "assertions": [
+        {
+          "id": "r2.a1",
+          "expression": "grpc-status == OK",
+          "passed": true
+        },
+        {
+          "id": "r2.a2",
+          "expression": "items[*].available > 0",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "grpcurl",
+        "command": "grpcurl -plaintext \\\n  -H 'x-service-token: $SERVICE_TOKEN' \\\n  -H 'x-testmania-run: run_148' \\\n  -d '{\"skus\":[\"CAF-ETI-250\",\"TAZ-CER-01\"]}' \\\n  localhost:50051 inventory.v1.InventoryService/GetStock",
+        "env": [
+          "SERVICE_TOKEN"
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "useCaseId": "UC-01",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "POST",
+      "target": "/v1/orders",
+      "url": "https://api.example.com/v1/orders",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 4120,
+      "durationMs": 146,
+      "passed": true,
+      "handler": {
+        "file": "tests/pedidos/crear-pedido.handler.ts",
+        "line": 24
+      },
+      "annotations": {
+        "usuario": "maria.gonzalez@acme.test",
+        "perfil": "cliente",
+        "tenant": "tienda-norte",
+        "paso": "when",
+        "idempotency": "crear-pedido-01"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "authorization",
+            "value": "Bearer ••••",
+            "sensitive": true,
+            "secretRef": "sec_5"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "idempotency-key",
+            "value": "8c1d2f0a-6b7e-4f15-9a0e-3c2b6d1e7f40"
+          },
+          {
+            "name": "x-tenant",
+            "value": "tienda-norte"
+          },
+          {
+            "name": "user-agent",
+            "value": "testmania/1.0.0"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "items": [
+              {
+                "sku": "CAF-ETI-250",
+                "qty": 1
+              },
+              {
+                "sku": "TAZ-CER-01",
+                "qty": 1
+              }
+            ],
+            "shipping": {
+              "method": "standard",
+              "address_id": "adr_331"
+            },
+            "currency": "CLP"
+          },
+          "contentType": "application/json"
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "201 Created",
+          "code": 201,
+          "reason": "Created"
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json; charset=utf-8"
+          },
+          {
+            "name": "location",
+            "value": "/v1/orders/ord_01JD3K8Q2Z7W4M"
+          },
+          {
+            "name": "etag",
+            "value": "W/\"a41-9bX2\""
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2a9e10"
+          },
+          {
+            "name": "x-ratelimit-remaining",
+            "value": "118"
+          },
+          {
+            "name": "server-timing",
+            "value": "db;dur=38, inventory;dur=21"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "id": "ord_01JD3K8Q2Z7W4M",
+            "status": "pending",
+            "customer_id": "usr_1042",
+            "items": [
+              {
+                "sku": "CAF-ETI-250",
+                "qty": 1,
+                "unit_price": 12990
+              },
+              {
+                "sku": "TAZ-CER-01",
+                "qty": 1,
+                "unit_price": 7490
+              }
+            ],
+            "subtotal": 20480,
+            "shipping": 3990,
+            "total": 24470,
+            "currency": "CLP",
+            "created_at": "2026-11-22T15:10:08.241Z"
+          },
+          "contentType": "application/json"
+        },
+        "sizeBytes": 1229
+      },
+      "assertions": [
+        {
+          "id": "r3.a1",
+          "expression": "status == 201",
+          "passed": true
+        },
+        {
+          "id": "r3.a2",
+          "expression": "header location existe",
+          "passed": true
+        },
+        {
+          "id": "r3.a3",
+          "expression": "body.status == \"pending\"",
+          "passed": true
+        },
+        {
+          "id": "r3.a4",
+          "expression": "body.total == 24470",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X POST 'https://api.example.com/v1/orders' \\\n  -H 'authorization: Bearer $TOKEN' \\\n  -H 'content-type: application/json' \\\n  -H 'accept: application/json' \\\n  -H 'idempotency-key: 8c1d2f0a-6b7e-4f15-9a0e-3c2b6d1e7f40' \\\n  -H 'x-tenant: tienda-norte' \\\n  -d '{\"items\":[{\"sku\":\"CAF-ETI-250\",\"qty\":1},{\"sku\":\"TAZ-CER-01\",\"qty\":1}],\"shipping\":{\"method\":\"standard\",\"address_id\":\"adr_331\"},\"currency\":\"CLP\"}'",
+        "env": [
+          "TOKEN"
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "useCaseId": "UC-01",
+      "protocol": "grpc",
+      "transport": "HTTP/2 unary",
+      "method": "GetStock",
+      "target": "inventory.v1.InventoryService/GetStock",
+      "url": "grpc://localhost:50051/inventory.v1.InventoryService/GetStock",
+      "services": [
+        "inventory"
+      ],
+      "startOffsetMs": 4274,
+      "durationMs": 9,
+      "passed": true,
+      "handler": {
+        "file": "tests/pedidos/crear-pedido.handler.ts",
+        "line": 33
+      },
+      "annotations": {
+        "perfil": "servicio-interno",
+        "paso": "then",
+        "nota": "stock luego del pedido"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/grpc+proto"
+          },
+          {
+            "name": ":authority",
+            "value": "localhost:50051"
+          },
+          {
+            "name": "grpc-timeout",
+            "value": "5S"
+          },
+          {
+            "name": "x-service-token",
+            "value": "svc_••••",
+            "sensitive": true,
+            "secretRef": "sec_4"
+          }
+        ],
+        "body": {
+          "encoding": "protobuf-json",
+          "value": {
+            "skus": [
+              "CAF-ETI-250",
+              "TAZ-CER-01"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "grpc",
+          "label": "0 OK",
+          "code": 0,
+          "name": "OK",
+          "message": ""
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/grpc+proto"
+          },
+          {
+            "name": "server",
+            "value": "inventory-svc/0.9.3"
+          }
+        ],
+        "trailers": [
+          {
+            "name": "grpc-status",
+            "value": "0"
+          },
+          {
+            "name": "grpc-message",
+            "value": ""
+          }
+        ],
+        "body": {
+          "encoding": "protobuf-json",
+          "value": {
+            "items": [
+              {
+                "sku": "CAF-ETI-250",
+                "available": 13,
+                "reserved": 1
+              },
+              {
+                "sku": "TAZ-CER-01",
+                "available": 5,
+                "reserved": 1
+              }
+            ]
+          }
+        },
+        "sizeBytes": 148
+      },
+      "assertions": [
+        {
+          "id": "r4.a1",
+          "expression": "items[0].reserved == 1",
+          "passed": true
+        },
+        {
+          "id": "r4.a2",
+          "expression": "items[1].reserved == 1",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "grpcurl",
+        "command": "grpcurl -plaintext \\\n  -H 'x-service-token: $SERVICE_TOKEN' \\\n  -d '{\"skus\":[\"CAF-ETI-250\",\"TAZ-CER-01\"]}' \\\n  localhost:50051 inventory.v1.InventoryService/GetStock",
+        "env": [
+          "SERVICE_TOKEN"
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "useCaseId": "UC-01",
+      "protocol": "sql",
+      "transport": "PostgreSQL",
+      "method": "SELECT",
+      "target": "orders WHERE id = $1",
+      "url": "postgres://localhost:5432/pedidos_test",
+      "services": [
+        "postgres"
+      ],
+      "startOffsetMs": 4290,
+      "durationMs": 4,
+      "passed": true,
+      "handler": {
+        "file": "tests/pedidos/crear-pedido.handler.ts",
+        "line": 38
+      },
+      "annotations": {
+        "paso": "then",
+        "nota": "verificación directa en base"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "servicio",
+            "value": "postgres"
+          },
+          {
+            "name": "host",
+            "value": "localhost:5432"
+          },
+          {
+            "name": "base",
+            "value": "pedidos_test"
+          },
+          {
+            "name": "usuario",
+            "value": "postgres (inferido)"
+          },
+          {
+            "name": "password",
+            "value": "••••",
+            "sensitive": true,
+            "secretRef": "sec_6"
+          }
+        ],
+        "body": {
+          "encoding": "sql",
+          "value": {
+            "statement": "SELECT id, status, total, currency\n  FROM orders\n WHERE id = $1;",
+            "params": [
+              "ord_01JD3K8Q2Z7W4M"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "sql",
+          "label": "1 fila",
+          "command": "SELECT",
+          "rowCount": 1
+        },
+        "headers": [
+          {
+            "name": "comando",
+            "value": "SELECT 1"
+          },
+          {
+            "name": "duración",
+            "value": "3,8 ms"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": [
+            {
+              "id": "ord_01JD3K8Q2Z7W4M",
+              "status": "pending",
+              "total": 24470,
+              "currency": "CLP"
+            }
+          ]
+        }
+      },
+      "assertions": [
+        {
+          "id": "r5.a1",
+          "expression": "rows.length == 1",
+          "passed": true
+        },
+        {
+          "id": "r5.a2",
+          "expression": "rows[0].status == \"pending\"",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "psql",
+        "command": "psql 'postgres://postgres:$PGPASSWORD@localhost:5432/pedidos_test' \\\n  -c \"SELECT id, status, total, currency FROM orders WHERE id = 'ord_01JD3K8Q2Z7W4M';\"",
+        "env": [
+          "PGPASSWORD"
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "useCaseId": "UC-02",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "GET",
+      "target": "/v1/orders/ord_01JD3K8Q2Z7W4M",
+      "url": "https://api.example.com/v1/orders/ord_01JD3K8Q2Z7W4M",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 4310,
+      "durationMs": 31,
+      "passed": true,
+      "handler": {
+        "file": "tests/pedidos/consultar-pedido.handler.ts",
+        "line": 11
+      },
+      "annotations": {
+        "usuario": "maria.gonzalez@acme.test",
+        "perfil": "cliente",
+        "tenant": "tienda-norte",
+        "paso": "when"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "authorization",
+            "value": "Bearer ••••",
+            "sensitive": true,
+            "secretRef": "sec_5"
+          },
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-tenant",
+            "value": "tienda-norte"
+          }
+        ],
+        "body": {
+          "encoding": "none",
+          "value": null
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "200 OK",
+          "code": 200,
+          "reason": "OK"
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json; charset=utf-8"
+          },
+          {
+            "name": "etag",
+            "value": "W/\"a41-9bX2\""
+          },
+          {
+            "name": "cache-control",
+            "value": "private, max-age=0, must-revalidate"
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2aa3b8"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "id": "ord_01JD3K8Q2Z7W4M",
+            "status": "pending",
+            "total": 24470,
+            "currency": "CLP",
+            "items": 2,
+            "updated_at": "2026-11-22T15:10:08.241Z"
+          },
+          "contentType": "application/json"
+        },
+        "sizeBytes": 1126
+      },
+      "assertions": [
+        {
+          "id": "r6.a1",
+          "expression": "status == 200",
+          "passed": true
+        },
+        {
+          "id": "r6.a2",
+          "expression": "header etag existe",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X GET 'https://api.example.com/v1/orders/ord_01JD3K8Q2Z7W4M' \\\n  -H 'authorization: Bearer $TOKEN' \\\n  -H 'accept: application/json' \\\n  -H 'x-tenant: tienda-norte'",
+        "env": [
+          "TOKEN"
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "useCaseId": "UC-02",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "GET",
+      "target": "/v1/orders/ord_01JD3K8Q2Z7W4M",
+      "url": "https://api.example.com/v1/orders/ord_01JD3K8Q2Z7W4M",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 4348,
+      "durationMs": 7,
+      "passed": true,
+      "handler": {
+        "file": "tests/pedidos/consultar-pedido.handler.ts",
+        "line": 16
+      },
+      "annotations": {
+        "usuario": "maria.gonzalez@acme.test",
+        "perfil": "cliente",
+        "paso": "then",
+        "nota": "revalidación con If-None-Match"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "authorization",
+            "value": "Bearer ••••",
+            "sensitive": true,
+            "secretRef": "sec_5"
+          },
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "if-none-match",
+            "value": "W/\"a41-9bX2\""
+          },
+          {
+            "name": "x-tenant",
+            "value": "tienda-norte"
+          }
+        ],
+        "body": {
+          "encoding": "none",
+          "value": null
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "304 Not Modified",
+          "code": 304,
+          "reason": "Not Modified"
+        },
+        "headers": [
+          {
+            "name": "etag",
+            "value": "W/\"a41-9bX2\""
+          },
+          {
+            "name": "cache-control",
+            "value": "private, max-age=0, must-revalidate"
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2aa4c1"
+          }
+        ],
+        "body": {
+          "encoding": "none",
+          "value": null
+        },
+        "sizeBytes": 0
+      },
+      "assertions": [
+        {
+          "id": "r7.a1",
+          "expression": "status == 304",
+          "passed": true
+        },
+        {
+          "id": "r7.a2",
+          "expression": "body vacío",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X GET 'https://api.example.com/v1/orders/ord_01JD3K8Q2Z7W4M' \\\n  -H 'authorization: Bearer $TOKEN' \\\n  -H 'accept: application/json' \\\n  -H 'if-none-match: W/\"a41-9bX2\"' \\\n  -H 'x-tenant: tienda-norte'",
+        "env": [
+          "TOKEN"
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "useCaseId": "UC-03",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "POST",
+      "target": "/v1/auth/token",
+      "url": "https://api.example.com/v1/auth/token",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 4362,
+      "durationMs": 79,
+      "passed": true,
+      "handler": {
+        "file": "tests/pedidos/cancelar-ajeno.handler.ts",
+        "line": 9
+      },
+      "annotations": {
+        "usuario": "pedro.soto@acme.test",
+        "perfil": "cliente",
+        "tenant": "tienda-norte",
+        "paso": "given"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "user-agent",
+            "value": "testmania/1.0.0"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "email": "pedro.soto@acme.test",
+            "password": "••••",
+            "grant_type": "password"
+          },
+          "contentType": "application/json",
+          "redactions": [
+            {
+              "path": "$.password",
+              "secretRef": "sec_8"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "200 OK",
+          "code": 200,
+          "reason": "OK"
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json; charset=utf-8"
+          },
+          {
+            "name": "cache-control",
+            "value": "no-store"
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2aa9d0"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "access_token": "••••",
+            "token_type": "Bearer",
+            "expires_in": 900,
+            "user": {
+              "id": "usr_1077",
+              "role": "customer",
+              "tenant": "tienda-norte"
+            }
+          },
+          "contentType": "application/json",
+          "redactions": [
+            {
+              "path": "$.access_token",
+              "secretRef": "sec_7"
+            }
+          ]
+        },
+        "sizeBytes": 608
+      },
+      "assertions": [
+        {
+          "id": "r8.a1",
+          "expression": "status == 200",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X POST 'https://api.example.com/v1/auth/token' \\\n  -H 'content-type: application/json' \\\n  -H 'accept: application/json' \\\n  -d '{\"email\":\"pedro.soto@acme.test\",\"password\":\"••••••••\",\"grant_type\":\"password\"}'",
+        "env": []
+      }
+    },
+    {
+      "id": 9,
+      "useCaseId": "UC-03",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "DELETE",
+      "target": "/v1/orders/ord_01JD3K8Q2Z7W4M",
+      "url": "https://api.example.com/v1/orders/ord_01JD3K8Q2Z7W4M",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 4448,
+      "durationMs": 18,
+      "passed": true,
+      "handler": {
+        "file": "tests/pedidos/cancelar-ajeno.handler.ts",
+        "line": 15
+      },
+      "annotations": {
+        "usuario": "pedro.soto@acme.test",
+        "perfil": "cliente",
+        "tenant": "tienda-norte",
+        "paso": "when",
+        "dueño-del-recurso": "maria.gonzalez@acme.test"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "authorization",
+            "value": "Bearer ••••",
+            "sensitive": true,
+            "secretRef": "sec_9"
+          },
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-tenant",
+            "value": "tienda-norte"
+          }
+        ],
+        "body": {
+          "encoding": "none",
+          "value": null
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "403 Forbidden",
+          "code": 403,
+          "reason": "Forbidden"
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/problem+json"
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2aab12"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "type": "https://api.example.com/errors/forbidden",
+            "title": "Forbidden",
+            "status": 403,
+            "detail": "El pedido no pertenece al usuario autenticado.",
+            "instance": "/v1/orders/ord_01JD3K8Q2Z7W4M"
+          },
+          "contentType": "application/json"
+        },
+        "sizeBytes": 214
+      },
+      "assertions": [
+        {
+          "id": "r9.a1",
+          "expression": "status == 403 (esperado)",
+          "passed": true,
+          "expectedFailure": true
+        },
+        {
+          "id": "r9.a2",
+          "expression": "body.type termina en /forbidden",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X DELETE 'https://api.example.com/v1/orders/ord_01JD3K8Q2Z7W4M' \\\n  -H 'authorization: Bearer $TOKEN' \\\n  -H 'accept: application/json' \\\n  -H 'x-tenant: tienda-norte'",
+        "env": [
+          "TOKEN"
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "useCaseId": "UC-04",
+      "protocol": "ws",
+      "transport": "WebSocket events.v1",
+      "method": "CONNECT",
+      "target": "wss://api.example.com/v1/events",
+      "url": "wss://api.example.com/v1/events",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 4475,
+      "durationMs": 1240,
+      "open": true,
+      "passed": true,
+      "handler": {
+        "file": "tests/admin/cambiar-estado.handler.ts",
+        "line": 12
+      },
+      "annotations": {
+        "usuario": "lucia.ramos@acme.test",
+        "perfil": "administrador",
+        "tenant": "tienda-norte",
+        "paso": "given",
+        "nota": "suscriptor abierto durante el caso"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "upgrade",
+            "value": "websocket"
+          },
+          {
+            "name": "connection",
+            "value": "Upgrade"
+          },
+          {
+            "name": "sec-websocket-version",
+            "value": "13"
+          },
+          {
+            "name": "sec-websocket-key",
+            "value": "dGhlIHNhbXBsZSBub25jZQ=="
+          },
+          {
+            "name": "sec-websocket-protocol",
+            "value": "events.v1"
+          },
+          {
+            "name": "authorization",
+            "value": "Bearer ••••",
+            "sensitive": true,
+            "secretRef": "sec_10"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "type": "subscribe",
+            "channel": "orders",
+            "filter": {
+              "order_id": "ord_01JD3K8Q2Z7W4M"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "ws",
+          "label": "101 Switching Protocols",
+          "event": "handshake",
+          "httpCode": 101
+        },
+        "headers": [
+          {
+            "name": "upgrade",
+            "value": "websocket"
+          },
+          {
+            "name": "connection",
+            "value": "Upgrade"
+          },
+          {
+            "name": "sec-websocket-accept",
+            "value": "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+          },
+          {
+            "name": "sec-websocket-protocol",
+            "value": "events.v1"
+          }
+        ],
+        "body": {
+          "encoding": "none",
+          "value": null
+        },
+        "frames": [
+          {
+            "direction": "in",
+            "offsetMs": 0,
+            "opcode": "text",
+            "data": {
+              "type": "subscribed",
+              "channel": "orders"
+            }
+          },
+          {
+            "direction": "in",
+            "offsetMs": 176,
+            "opcode": "text",
+            "data": {
+              "type": "order.status_changed",
+              "order_id": "ord_01JD3K8Q2Z7W4M",
+              "from": "pending",
+              "to": "shipped"
+            }
+          },
+          {
+            "direction": "out",
+            "offsetMs": 1240,
+            "opcode": "close",
+            "data": "close 1000 (normal)"
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "id": "r10.a1",
+          "expression": "handshake 101",
+          "passed": true
+        },
+        {
+          "id": "r10.a2",
+          "expression": "frame subscribed recibido",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "websocat",
+        "command": "websocat -H 'Authorization: Bearer $TOKEN' \\\n  --protocol events.v1 wss://api.example.com/v1/events\n> {\"type\":\"subscribe\",\"channel\":\"orders\",\"filter\":{\"order_id\":\"ord_01JD3K8Q2Z7W4M\"}}",
+        "env": [
+          "TOKEN"
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "useCaseId": "UC-04",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "POST",
+      "target": "/v1/auth/token",
+      "url": "https://api.example.com/v1/auth/token",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 4490,
+      "durationMs": 81,
+      "passed": true,
+      "handler": {
+        "file": "tests/admin/cambiar-estado.handler.ts",
+        "line": 18
+      },
+      "annotations": {
+        "usuario": "lucia.ramos@acme.test",
+        "perfil": "administrador",
+        "tenant": "tienda-norte",
+        "paso": "given"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "email": "lucia.ramos@acme.test",
+            "password": "••••",
+            "grant_type": "password",
+            "scope": "orders:write admin"
+          },
+          "contentType": "application/json",
+          "redactions": [
+            {
+              "path": "$.password",
+              "secretRef": "sec_12"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "200 OK",
+          "code": 200,
+          "reason": "OK"
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json; charset=utf-8"
+          },
+          {
+            "name": "cache-control",
+            "value": "no-store"
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2ab0e3"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "access_token": "••••",
+            "token_type": "Bearer",
+            "expires_in": 900,
+            "user": {
+              "id": "usr_0003",
+              "role": "admin",
+              "tenant": "tienda-norte"
+            },
+            "scope": "orders:write admin"
+          },
+          "contentType": "application/json",
+          "redactions": [
+            {
+              "path": "$.access_token",
+              "secretRef": "sec_11"
+            }
+          ]
+        },
+        "sizeBytes": 640
+      },
+      "assertions": [
+        {
+          "id": "r11.a1",
+          "expression": "status == 200",
+          "passed": true
+        },
+        {
+          "id": "r11.a2",
+          "expression": "body.user.role == \"admin\"",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X POST 'https://api.example.com/v1/auth/token' \\\n  -H 'content-type: application/json' \\\n  -H 'accept: application/json' \\\n  -d '{\"email\":\"lucia.ramos@acme.test\",\"password\":\"••••••••\",\"grant_type\":\"password\",\"scope\":\"orders:write admin\"}'",
+        "env": []
+      }
+    },
+    {
+      "id": 12,
+      "useCaseId": "UC-04",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "PATCH",
+      "target": "/v1/orders/ord_01JD3K8Q2Z7W4M/status",
+      "url": "https://api.example.com/v1/orders/ord_01JD3K8Q2Z7W4M/status",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 4580,
+      "durationMs": 62,
+      "passed": true,
+      "handler": {
+        "file": "tests/admin/cambiar-estado.handler.ts",
+        "line": 23
+      },
+      "annotations": {
+        "usuario": "lucia.ramos@acme.test",
+        "perfil": "administrador",
+        "tenant": "tienda-norte",
+        "paso": "when"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "authorization",
+            "value": "Bearer ••••",
+            "sensitive": true,
+            "secretRef": "sec_10"
+          },
+          {
+            "name": "content-type",
+            "value": "application/merge-patch+json"
+          },
+          {
+            "name": "if-match",
+            "value": "W/\"a41-9bX2\""
+          },
+          {
+            "name": "x-tenant",
+            "value": "tienda-norte"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "status": "shipped",
+            "tracking": {
+              "carrier": "starken",
+              "code": "STK-88412093"
+            }
+          },
+          "contentType": "application/json"
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "200 OK",
+          "code": 200,
+          "reason": "OK"
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json; charset=utf-8"
+          },
+          {
+            "name": "etag",
+            "value": "W/\"a58-Lq0d\""
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2ab2f7"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "id": "ord_01JD3K8Q2Z7W4M",
+            "status": "shipped",
+            "tracking": {
+              "carrier": "starken",
+              "code": "STK-88412093"
+            },
+            "updated_at": "2026-11-22T15:10:08.702Z"
+          },
+          "contentType": "application/json"
+        },
+        "sizeBytes": 402
+      },
+      "assertions": [
+        {
+          "id": "r12.a1",
+          "expression": "status == 200",
+          "passed": true
+        },
+        {
+          "id": "r12.a2",
+          "expression": "body.status == \"shipped\"",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X PATCH 'https://api.example.com/v1/orders/ord_01JD3K8Q2Z7W4M/status' \\\n  -H 'authorization: Bearer $TOKEN' \\\n  -H 'content-type: application/merge-patch+json' \\\n  -H 'if-match: W/\"a41-9bX2\"' \\\n  -H 'x-tenant: tienda-norte' \\\n  -d '{\"status\":\"shipped\",\"tracking\":{\"carrier\":\"starken\",\"code\":\"STK-88412093\"}}'",
+        "env": [
+          "TOKEN"
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "useCaseId": "UC-04",
+      "protocol": "ws",
+      "transport": "WebSocket frame de texto",
+      "method": "MESSAGE",
+      "target": "← order.status_changed",
+      "url": "← order.status_changed",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 4651,
+      "durationMs": 2,
+      "parentRequestId": 10,
+      "passed": true,
+      "handler": {
+        "file": "tests/admin/cambiar-estado.handler.ts",
+        "line": 29
+      },
+      "annotations": {
+        "usuario": "lucia.ramos@acme.test",
+        "perfil": "administrador",
+        "paso": "then"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "conexión",
+            "value": "request #10"
+          },
+          {
+            "name": "opcode",
+            "value": "1 (text)"
+          }
+        ],
+        "body": {
+          "encoding": "none",
+          "value": null
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "ws",
+          "label": "frame text recibido",
+          "event": "frame"
+        },
+        "headers": [
+          {
+            "name": "latencia desde PATCH",
+            "value": "71 ms"
+          },
+          {
+            "name": "tamaño",
+            "value": "188 B"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "type": "order.status_changed",
+            "order_id": "ord_01JD3K8Q2Z7W4M",
+            "from": "pending",
+            "to": "shipped",
+            "actor": "usr_0003",
+            "at": "2026-11-22T15:10:08.704Z"
+          }
+        },
+        "sizeBytes": 188
+      },
+      "assertions": [
+        {
+          "id": "r13.a1",
+          "expression": "evento recibido en < 2 s",
+          "passed": true
+        },
+        {
+          "id": "r13.a2",
+          "expression": "frame.to == \"shipped\"",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "none",
+        "command": "# frame recibido en la conexión del request #10",
+        "env": []
+      }
+    },
+    {
+      "id": 14,
+      "useCaseId": "UC-05",
+      "protocol": "graphql",
+      "transport": "GraphQL sobre HTTP POST",
+      "method": "QUERY",
+      "target": "SearchProducts",
+      "url": "https://api.example.com/graphql",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 5730,
+      "durationMs": 54,
+      "passed": true,
+      "handler": {
+        "file": "tests/catalogo/buscar.handler.ts",
+        "line": 10
+      },
+      "annotations": {
+        "usuario": "anónimo",
+        "perfil": "visitante",
+        "paso": "when"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "accept",
+            "value": "application/graphql-response+json"
+          },
+          {
+            "name": "apollo-require-preflight",
+            "value": "true"
+          }
+        ],
+        "body": {
+          "encoding": "graphql",
+          "value": {
+            "operationName": "SearchProducts",
+            "query": "query SearchProducts($q: String!, $first: Int) {\n  products(search: $q, first: $first) {\n    totalCount\n    nodes { sku name price { amount currency } }\n  }\n}",
+            "variables": {
+              "q": "etiopía",
+              "first": 5
+            }
+          },
+          "contentType": "application/json"
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "graphql",
+          "label": "200 OK · data",
+          "httpCode": 200,
+          "hasData": true,
+          "errorCount": 0
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/graphql-response+json"
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2b0c44"
+          },
+          {
+            "name": "cache-control",
+            "value": "public, max-age=30"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "data": {
+              "products": {
+                "totalCount": 2,
+                "nodes": [
+                  {
+                    "sku": "CAF-ETI-250",
+                    "name": "Café Etiopía Yirgacheffe 250 g",
+                    "price": {
+                      "amount": 12990,
+                      "currency": "CLP"
+                    }
+                  },
+                  {
+                    "sku": "CAF-ETI-1K",
+                    "name": "Café Etiopía Yirgacheffe 1 kg",
+                    "price": {
+                      "amount": 42990,
+                      "currency": "CLP"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "contentType": "application/json"
+        },
+        "sizeBytes": 1638
+      },
+      "assertions": [
+        {
+          "id": "r14.a1",
+          "expression": "errors no existe",
+          "passed": true
+        },
+        {
+          "id": "r14.a2",
+          "expression": "data.products.totalCount == 2",
+          "passed": true
+        },
+        {
+          "id": "r14.a3",
+          "expression": "todos los nombres contienen \"Etiopía\"",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X POST 'https://api.example.com/graphql' \\\n  -H 'content-type: application/json' \\\n  -H 'accept: application/graphql-response+json' \\\n  -H 'apollo-require-preflight: true' \\\n  -d '{\"operationName\":\"SearchProducts\",\"query\":\"query SearchProducts($q: String!, $first: Int) {\\n  products(search: $q, first: $first) {\\n    totalCount\\n    nodes { sku name price { amount currency } }\\n  }\\n}\",\"variables\":{\"q\":\"etiopía\",\"first\":5}}'",
+        "env": []
+      }
+    },
+    {
+      "id": 15,
+      "useCaseId": "UC-05",
+      "protocol": "graphql",
+      "transport": "GraphQL sobre HTTP POST",
+      "method": "QUERY",
+      "target": "SearchProductsInvalid",
+      "url": "https://api.example.com/graphql",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 5792,
+      "durationMs": 11,
+      "passed": true,
+      "handler": {
+        "file": "tests/catalogo/buscar.handler.ts",
+        "line": 21
+      },
+      "annotations": {
+        "usuario": "anónimo",
+        "perfil": "visitante",
+        "paso": "then",
+        "nota": "campo inexistente a propósito"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "accept",
+            "value": "application/graphql-response+json"
+          }
+        ],
+        "body": {
+          "encoding": "graphql",
+          "value": {
+            "operationName": "SearchProductsInvalid",
+            "query": "query SearchProductsInvalid {\n  products(search: \"etiopía\") { nodes { sku weightGrams } }\n}",
+            "variables": {}
+          },
+          "contentType": "application/json"
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "graphql",
+          "label": "200 OK · errors",
+          "httpCode": 200,
+          "hasData": false,
+          "errorCount": 1
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/graphql-response+json"
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2b0d01"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "errors": [
+              {
+                "message": "Cannot query field \"weightGrams\" on type \"Product\".",
+                "locations": [
+                  {
+                    "line": 2,
+                    "column": 44
+                  }
+                ],
+                "extensions": {
+                  "code": "GRAPHQL_VALIDATION_FAILED"
+                }
+              }
+            ]
+          },
+          "contentType": "application/json"
+        },
+        "sizeBytes": 420
+      },
+      "assertions": [
+        {
+          "id": "r15.a1",
+          "expression": "errors[0].extensions.code == \"GRAPHQL_VALIDATION_FAILED\"",
+          "passed": true,
+          "expectedFailure": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X POST 'https://api.example.com/graphql' \\\n  -H 'content-type: application/json' \\\n  -H 'accept: application/graphql-response+json' \\\n  -d '{\"operationName\":\"SearchProductsInvalid\",\"query\":\"query SearchProductsInvalid {\\n  products(search: \\\"etiopía\\\") { nodes { sku weightGrams } }\\n}\",\"variables\":{}}'",
+        "env": []
+      }
+    },
+    {
+      "id": 16,
+      "useCaseId": "UC-06",
+      "protocol": "grpc",
+      "transport": "HTTP/2 unary",
+      "method": "SetStock",
+      "target": "inventory.v1.InventoryService/SetStock",
+      "url": "grpc://localhost:50051/inventory.v1.InventoryService/SetStock",
+      "services": [
+        "inventory"
+      ],
+      "startOffsetMs": 5810,
+      "durationMs": 8,
+      "passed": true,
+      "handler": {
+        "file": "tests/inventario/reserva-sin-stock.handler.ts",
+        "line": 8
+      },
+      "annotations": {
+        "perfil": "servicio-interno",
+        "paso": "given",
+        "fixture": "stock-bajo"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/grpc+proto"
+          },
+          {
+            "name": ":authority",
+            "value": "localhost:50051"
+          },
+          {
+            "name": "grpc-timeout",
+            "value": "5S"
+          },
+          {
+            "name": "x-service-token",
+            "value": "svc_••••",
+            "sensitive": true,
+            "secretRef": "sec_4"
+          }
+        ],
+        "body": {
+          "encoding": "protobuf-json",
+          "value": {
+            "sku": "TAZ-CER-01",
+            "available": 2
+          }
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "grpc",
+          "label": "0 OK",
+          "code": 0,
+          "name": "OK",
+          "message": ""
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/grpc+proto"
+          },
+          {
+            "name": "server",
+            "value": "inventory-svc/0.9.3"
+          }
+        ],
+        "trailers": [
+          {
+            "name": "grpc-status",
+            "value": "0"
+          },
+          {
+            "name": "grpc-message",
+            "value": ""
+          }
+        ],
+        "body": {
+          "encoding": "protobuf-json",
+          "value": {
+            "sku": "TAZ-CER-01",
+            "available": 2,
+            "reserved": 0
+          }
+        },
+        "sizeBytes": 64
+      },
+      "assertions": [
+        {
+          "id": "r16.a1",
+          "expression": "grpc-status == OK",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "grpcurl",
+        "command": "grpcurl -plaintext \\\n  -H 'x-service-token: $SERVICE_TOKEN' \\\n  -d '{\"sku\":\"TAZ-CER-01\",\"available\":2}' \\\n  localhost:50051 inventory.v1.InventoryService/SetStock",
+        "env": [
+          "SERVICE_TOKEN"
+        ]
+      }
+    },
+    {
+      "id": 17,
+      "useCaseId": "UC-06",
+      "protocol": "grpc",
+      "transport": "HTTP/2 unary",
+      "method": "ReserveStock",
+      "target": "inventory.v1.InventoryService/ReserveStock",
+      "url": "grpc://localhost:50051/inventory.v1.InventoryService/ReserveStock",
+      "services": [
+        "inventory"
+      ],
+      "startOffsetMs": 5822,
+      "durationMs": 14,
+      "passed": false,
+      "handler": {
+        "file": "tests/inventario/reserva-sin-stock.handler.ts",
+        "line": 13
+      },
+      "annotations": {
+        "usuario": "maria.gonzalez@acme.test",
+        "perfil": "cliente",
+        "paso": "when",
+        "nota": "reserva mayor al stock"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/grpc+proto"
+          },
+          {
+            "name": ":authority",
+            "value": "localhost:50051"
+          },
+          {
+            "name": "grpc-timeout",
+            "value": "5S"
+          },
+          {
+            "name": "x-service-token",
+            "value": "svc_••••",
+            "sensitive": true,
+            "secretRef": "sec_4"
+          },
+          {
+            "name": "x-on-behalf-of",
+            "value": "usr_1042"
+          }
+        ],
+        "body": {
+          "encoding": "protobuf-json",
+          "value": {
+            "sku": "TAZ-CER-01",
+            "quantity": 5,
+            "order_id": "ord_01JD3KB0R7"
+          }
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "grpc",
+          "label": "0 OK",
+          "code": 0,
+          "name": "OK",
+          "message": ""
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/grpc+proto"
+          },
+          {
+            "name": "server",
+            "value": "inventory-svc/0.9.3"
+          }
+        ],
+        "trailers": [
+          {
+            "name": "grpc-status",
+            "value": "0"
+          },
+          {
+            "name": "grpc-message",
+            "value": ""
+          }
+        ],
+        "body": {
+          "encoding": "protobuf-json",
+          "value": {
+            "reservation_id": "rsv_5512",
+            "sku": "TAZ-CER-01",
+            "reserved": 5,
+            "available": -3
+          }
+        },
+        "sizeBytes": 96
+      },
+      "assertions": [
+        {
+          "id": "r17.a1",
+          "expression": "grpc-status == FAILED_PRECONDITION",
+          "passed": false,
+          "expected": "FAILED_PRECONDITION (9)",
+          "actual": "OK (0)"
+        },
+        {
+          "id": "r17.a2",
+          "expression": "response.available >= 0",
+          "passed": false,
+          "expected": ">= 0",
+          "actual": "-3"
+        }
+      ],
+      "reproduce": {
+        "tool": "grpcurl",
+        "command": "grpcurl -plaintext \\\n  -H 'x-service-token: $SERVICE_TOKEN' \\\n  -H 'x-on-behalf-of: usr_1042' \\\n  -d '{\"sku\":\"TAZ-CER-01\",\"quantity\":5,\"order_id\":\"ord_01JD3KB0R7\"}' \\\n  localhost:50051 inventory.v1.InventoryService/ReserveStock",
+        "env": [
+          "SERVICE_TOKEN"
+        ]
+      }
+    },
+    {
+      "id": 18,
+      "useCaseId": "UC-07",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "POST",
+      "target": "/v1/orders",
+      "url": "https://api.example.com/v1/orders",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 5845,
+      "durationMs": 133,
+      "passed": true,
+      "handler": {
+        "file": "tests/pagos/pago-rechazado.handler.ts",
+        "line": 10
+      },
+      "annotations": {
+        "usuario": "maria.gonzalez@acme.test",
+        "perfil": "cliente",
+        "tenant": "tienda-norte",
+        "paso": "given"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "authorization",
+            "value": "Bearer ••••",
+            "sensitive": true,
+            "secretRef": "sec_5"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "idempotency-key",
+            "value": "1f7b0c33-2a1d-4e8f-b6c9-77d0a2e1c5b8"
+          },
+          {
+            "name": "x-tenant",
+            "value": "tienda-norte"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "items": [
+              {
+                "sku": "CAF-ETI-250",
+                "qty": 2
+              }
+            ],
+            "shipping": {
+              "method": "express",
+              "address_id": "adr_331"
+            },
+            "currency": "CLP"
+          },
+          "contentType": "application/json"
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "201 Created",
+          "code": 201,
+          "reason": "Created"
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json; charset=utf-8"
+          },
+          {
+            "name": "location",
+            "value": "/v1/orders/ord_01JD3KC4N1P8VX"
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2b1a90"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "id": "ord_01JD3KC4N1P8VX",
+            "status": "pending",
+            "total": 31970,
+            "currency": "CLP"
+          },
+          "contentType": "application/json"
+        },
+        "sizeBytes": 1024
+      },
+      "assertions": [
+        {
+          "id": "r18.a1",
+          "expression": "status == 201",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X POST 'https://api.example.com/v1/orders' \\\n  -H 'authorization: Bearer $TOKEN' \\\n  -H 'content-type: application/json' \\\n  -H 'idempotency-key: 1f7b0c33-2a1d-4e8f-b6c9-77d0a2e1c5b8' \\\n  -H 'x-tenant: tienda-norte' \\\n  -d '{\"items\":[{\"sku\":\"CAF-ETI-250\",\"qty\":2}],\"shipping\":{\"method\":\"express\",\"address_id\":\"adr_331\"},\"currency\":\"CLP\"}'",
+        "env": [
+          "TOKEN"
+        ]
+      }
+    },
+    {
+      "id": 19,
+      "useCaseId": "UC-07",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "POST",
+      "target": "/v1/orders/ord_01JD3KC4N1P8VX/payments",
+      "url": "https://api.example.com/v1/orders/ord_01JD3KC4N1P8VX/payments",
+      "services": [
+        "api",
+        "payments"
+      ],
+      "startOffsetMs": 5985,
+      "durationMs": 412,
+      "passed": true,
+      "handler": {
+        "file": "tests/pagos/pago-rechazado.handler.ts",
+        "line": 15
+      },
+      "annotations": {
+        "usuario": "maria.gonzalez@acme.test",
+        "perfil": "cliente",
+        "tenant": "tienda-norte",
+        "paso": "when",
+        "tarjeta": "visa-rechazada (4000 0000 0000 0002)"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "authorization",
+            "value": "Bearer ••••",
+            "sensitive": true,
+            "secretRef": "sec_5"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "idempotency-key",
+            "value": "e2a9…c01"
+          },
+          {
+            "name": "x-tenant",
+            "value": "tienda-norte"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "method": "card",
+            "card_token": "tok_test_declined",
+            "amount": 31970,
+            "currency": "CLP"
+          },
+          "contentType": "application/json"
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "402 Payment Required",
+          "code": 402,
+          "reason": "Payment Required"
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/problem+json"
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2b1c55"
+          },
+          {
+            "name": "x-upstream",
+            "value": "payments.example.com/sandbox (398 ms)"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "type": "https://api.example.com/errors/payment-declined",
+            "title": "Payment declined",
+            "status": 402,
+            "detail": "La tarjeta fue rechazada por el emisor.",
+            "decline_code": "card_declined"
+          },
+          "contentType": "application/json"
+        },
+        "sizeBytes": 356
+      },
+      "assertions": [
+        {
+          "id": "r19.a1",
+          "expression": "status == 402 (esperado)",
+          "passed": true,
+          "expectedFailure": true
+        },
+        {
+          "id": "r19.a2",
+          "expression": "body.decline_code == \"card_declined\"",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X POST 'https://api.example.com/v1/orders/ord_01JD3KC4N1P8VX/payments' \\\n  -H 'authorization: Bearer $TOKEN' \\\n  -H 'content-type: application/json' \\\n  -H 'idempotency-key: e2a9…c01' \\\n  -H 'x-tenant: tienda-norte' \\\n  -d '{\"method\":\"card\",\"card_token\":\"tok_test_declined\",\"amount\":31970,\"currency\":\"CLP\"}'",
+        "env": [
+          "TOKEN"
+        ]
+      }
+    },
+    {
+      "id": 20,
+      "useCaseId": "UC-07",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "GET",
+      "target": "/v1/orders/ord_01JD3KC4N1P8VX",
+      "url": "https://api.example.com/v1/orders/ord_01JD3KC4N1P8VX",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 6405,
+      "durationMs": 22,
+      "passed": false,
+      "handler": {
+        "file": "tests/pagos/pago-rechazado.handler.ts",
+        "line": 21
+      },
+      "annotations": {
+        "usuario": "maria.gonzalez@acme.test",
+        "perfil": "cliente",
+        "tenant": "tienda-norte",
+        "paso": "then"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "authorization",
+            "value": "Bearer ••••",
+            "sensitive": true,
+            "secretRef": "sec_5"
+          },
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-tenant",
+            "value": "tienda-norte"
+          }
+        ],
+        "body": {
+          "encoding": "none",
+          "value": null
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "200 OK",
+          "code": 200,
+          "reason": "OK"
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json; charset=utf-8"
+          },
+          {
+            "name": "etag",
+            "value": "W/\"9c2-hh1A\""
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2b2410"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "id": "ord_01JD3KC4N1P8VX",
+            "status": "pending",
+            "total": 31970,
+            "currency": "CLP",
+            "payment": {
+              "attempts": 1,
+              "last_error": "card_declined"
+            }
+          },
+          "contentType": "application/json"
+        },
+        "sizeBytes": 980
+      },
+      "assertions": [
+        {
+          "id": "r20.a1",
+          "expression": "status == 200",
+          "passed": true
+        },
+        {
+          "id": "r20.a2",
+          "expression": "body.status == \"payment_failed\"",
+          "passed": false,
+          "expected": "\"payment_failed\"",
+          "actual": "\"pending\""
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X GET 'https://api.example.com/v1/orders/ord_01JD3KC4N1P8VX' \\\n  -H 'authorization: Bearer $TOKEN' \\\n  -H 'accept: application/json' \\\n  -H 'x-tenant: tienda-norte'",
+        "env": [
+          "TOKEN"
+        ]
+      }
+    },
+    {
+      "id": 21,
+      "useCaseId": "UC-09",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "POST",
+      "target": "/v1/auth/token",
+      "url": "https://api.example.com/v1/auth/token",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 6440,
+      "durationMs": 71,
+      "passed": true,
+      "handler": {
+        "file": "tests/auth/rate-limit.handler.ts",
+        "line": 11
+      },
+      "annotations": {
+        "usuario": "pedro.soto@acme.test",
+        "perfil": "cliente",
+        "paso": "given",
+        "intento": "1",
+        "nota": "contraseña incorrecta"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-forwarded-for",
+            "value": "10.88.0.14"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "email": "pedro.soto@acme.test",
+            "password": "••••",
+            "grant_type": "password"
+          },
+          "contentType": "application/json",
+          "redactions": [
+            {
+              "path": "$.password",
+              "secretRef": "sec_13"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "401 Unauthorized",
+          "code": 401,
+          "reason": "Unauthorized"
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/problem+json"
+          },
+          {
+            "name": "x-ratelimit-limit",
+            "value": "3"
+          },
+          {
+            "name": "x-ratelimit-remaining",
+            "value": "2"
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2b310e"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "type": "https://api.example.com/errors/invalid-credentials",
+            "title": "Unauthorized",
+            "status": 401,
+            "detail": "Credenciales inválidas."
+          },
+          "contentType": "application/json"
+        },
+        "sizeBytes": 198
+      },
+      "assertions": [
+        {
+          "id": "r21.a1",
+          "expression": "status == 401 (esperado)",
+          "passed": true,
+          "expectedFailure": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X POST 'https://api.example.com/v1/auth/token' \\\n  -H 'content-type: application/json' \\\n  -H 'accept: application/json' \\\n  -H 'x-forwarded-for: 10.88.0.14' \\\n  -d '{\"email\":\"pedro.soto@acme.test\",\"password\":\"••••••••\",\"grant_type\":\"password\"}'",
+        "env": []
+      }
+    },
+    {
+      "id": 22,
+      "useCaseId": "UC-09",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "POST",
+      "target": "/v1/auth/token",
+      "url": "https://api.example.com/v1/auth/token",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 6520,
+      "durationMs": 68,
+      "passed": true,
+      "handler": {
+        "file": "tests/auth/rate-limit.handler.ts",
+        "line": 11
+      },
+      "annotations": {
+        "usuario": "pedro.soto@acme.test",
+        "perfil": "cliente",
+        "paso": "given",
+        "intento": "2",
+        "nota": "contraseña incorrecta"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-forwarded-for",
+            "value": "10.88.0.14"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "email": "pedro.soto@acme.test",
+            "password": "••••",
+            "grant_type": "password"
+          },
+          "contentType": "application/json",
+          "redactions": [
+            {
+              "path": "$.password",
+              "secretRef": "sec_14"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "401 Unauthorized",
+          "code": 401,
+          "reason": "Unauthorized"
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/problem+json"
+          },
+          {
+            "name": "x-ratelimit-limit",
+            "value": "3"
+          },
+          {
+            "name": "x-ratelimit-remaining",
+            "value": "1"
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2b320e"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "type": "https://api.example.com/errors/invalid-credentials",
+            "title": "Unauthorized",
+            "status": 401,
+            "detail": "Credenciales inválidas."
+          },
+          "contentType": "application/json"
+        },
+        "sizeBytes": 198
+      },
+      "assertions": [
+        {
+          "id": "r22.a1",
+          "expression": "status == 401 (esperado)",
+          "passed": true,
+          "expectedFailure": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X POST 'https://api.example.com/v1/auth/token' \\\n  -H 'content-type: application/json' \\\n  -H 'accept: application/json' \\\n  -H 'x-forwarded-for: 10.88.0.14' \\\n  -d '{\"email\":\"pedro.soto@acme.test\",\"password\":\"••••••••\",\"grant_type\":\"password\"}'",
+        "env": []
+      }
+    },
+    {
+      "id": 23,
+      "useCaseId": "UC-09",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "POST",
+      "target": "/v1/auth/token",
+      "url": "https://api.example.com/v1/auth/token",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 6600,
+      "durationMs": 74,
+      "passed": true,
+      "handler": {
+        "file": "tests/auth/rate-limit.handler.ts",
+        "line": 11
+      },
+      "annotations": {
+        "usuario": "pedro.soto@acme.test",
+        "perfil": "cliente",
+        "paso": "given",
+        "intento": "3",
+        "nota": "contraseña incorrecta"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-forwarded-for",
+            "value": "10.88.0.14"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "email": "pedro.soto@acme.test",
+            "password": "••••",
+            "grant_type": "password"
+          },
+          "contentType": "application/json",
+          "redactions": [
+            {
+              "path": "$.password",
+              "secretRef": "sec_15"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "401 Unauthorized",
+          "code": 401,
+          "reason": "Unauthorized"
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/problem+json"
+          },
+          {
+            "name": "x-ratelimit-limit",
+            "value": "3"
+          },
+          {
+            "name": "x-ratelimit-remaining",
+            "value": "0"
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2b330e"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "type": "https://api.example.com/errors/invalid-credentials",
+            "title": "Unauthorized",
+            "status": 401,
+            "detail": "Credenciales inválidas."
+          },
+          "contentType": "application/json"
+        },
+        "sizeBytes": 198
+      },
+      "assertions": [
+        {
+          "id": "r23.a1",
+          "expression": "status == 401 (esperado)",
+          "passed": true,
+          "expectedFailure": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X POST 'https://api.example.com/v1/auth/token' \\\n  -H 'content-type: application/json' \\\n  -H 'accept: application/json' \\\n  -H 'x-forwarded-for: 10.88.0.14' \\\n  -d '{\"email\":\"pedro.soto@acme.test\",\"password\":\"••••••••\",\"grant_type\":\"password\"}'",
+        "env": []
+      }
+    },
+    {
+      "id": 24,
+      "useCaseId": "UC-09",
+      "protocol": "http",
+      "transport": "HTTP/1.1",
+      "method": "POST",
+      "target": "/v1/auth/token",
+      "url": "https://api.example.com/v1/auth/token",
+      "services": [
+        "api"
+      ],
+      "startOffsetMs": 6684,
+      "durationMs": 6,
+      "passed": true,
+      "handler": {
+        "file": "tests/auth/rate-limit.handler.ts",
+        "line": 17
+      },
+      "annotations": {
+        "usuario": "pedro.soto@acme.test",
+        "perfil": "cliente",
+        "paso": "then",
+        "intento": "4"
+      },
+      "request": {
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-forwarded-for",
+            "value": "10.88.0.14"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "email": "pedro.soto@acme.test",
+            "password": "••••",
+            "grant_type": "password"
+          },
+          "contentType": "application/json",
+          "redactions": [
+            {
+              "path": "$.password",
+              "secretRef": "sec_16"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": {
+          "kind": "http",
+          "label": "429 Too Many Requests",
+          "code": 429,
+          "reason": "Too Many Requests"
+        },
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/problem+json"
+          },
+          {
+            "name": "retry-after",
+            "value": "60"
+          },
+          {
+            "name": "x-ratelimit-limit",
+            "value": "3"
+          },
+          {
+            "name": "x-ratelimit-remaining",
+            "value": "0"
+          },
+          {
+            "name": "x-request-id",
+            "value": "req_7f2b3a71"
+          }
+        ],
+        "body": {
+          "encoding": "json",
+          "value": {
+            "type": "https://api.example.com/errors/rate-limited",
+            "title": "Too Many Requests",
+            "status": 429,
+            "detail": "Demasiados intentos. Intenta de nuevo en 60 segundos."
+          },
+          "contentType": "application/json"
+        },
+        "sizeBytes": 176
+      },
+      "assertions": [
+        {
+          "id": "r24.a1",
+          "expression": "status == 429 (esperado)",
+          "passed": true,
+          "expectedFailure": true
+        },
+        {
+          "id": "r24.a2",
+          "expression": "header retry-after == 60",
+          "passed": true
+        }
+      ],
+      "reproduce": {
+        "tool": "curl",
+        "command": "curl -X POST 'https://api.example.com/v1/auth/token' \\\n  -H 'content-type: application/json' \\\n  -H 'accept: application/json' \\\n  -H 'x-forwarded-for: 10.88.0.14' \\\n  -d '{\"email\":\"pedro.soto@acme.test\",\"password\":\"••••••••\",\"grant_type\":\"password\"}'",
+        "env": []
+      }
+    }
+  ],
+  "services": [
+    {
+      "name": "postgres",
+      "mode": "provisioned",
+      "image": "docker.io/library/postgres:16.4-alpine",
+      "endpoint": "localhost:55432",
+      "ports": [
+        {
+          "host": 55432,
+          "container": 5432,
+          "protocol": "tcp"
+        }
+      ],
+      "env": [
+        {
+          "name": "POSTGRES_DB",
+          "source": "env-file",
+          "value": "pedidos_test"
+        },
+        {
+          "name": "POSTGRES_PASSWORD",
+          "source": "inferred",
+          "value": "••••",
+          "sensitive": true,
+          "secretRef": "sec_6"
+        }
+      ],
+      "health": {
+        "check": "pg_isready",
+        "status": "healthy",
+        "durationMs": 2140
+      },
+      "readyMs": 2700,
+      "requestCount": 1,
+      "artifacts": [
+        {
+          "kind": "migration",
+          "source": "./db/migrations/*.sql",
+          "description": "12 aplicadas (001_init … 012_payments)",
+          "items": 12,
+          "startOffsetMs": 2140,
+          "durationMs": 470,
+          "status": "applied"
+        },
+        {
+          "kind": "seed",
+          "source": "./db/seeds/usuarios.sql",
+          "description": "4 usuarios: 2 clientes, 1 admin, 1 de servicio",
+          "items": 4,
+          "startOffsetMs": 2610,
+          "durationMs": 50,
+          "status": "applied"
+        },
+        {
+          "kind": "seed",
+          "source": "./db/seeds/catalogo.sql",
+          "description": "18 productos, 3 direcciones",
+          "items": 18,
+          "startOffsetMs": 2660,
+          "durationMs": 40,
+          "status": "applied"
+        }
+      ],
+      "storage": "tmpfs"
+    },
+    {
+      "name": "redis",
+      "mode": "provisioned",
+      "image": "docker.io/library/redis:7.4-alpine",
+      "endpoint": "localhost:56379",
+      "ports": [
+        {
+          "host": 56379,
+          "container": 6379,
+          "protocol": "tcp"
+        }
+      ],
+      "env": [],
+      "health": {
+        "check": "PING → PONG",
+        "status": "healthy",
+        "durationMs": 610
+      },
+      "readyMs": 610,
+      "requestCount": 0,
+      "artifacts": []
+    },
+    {
+      "name": "inventory",
+      "mode": "provisioned",
+      "image": "localhost/inventory-svc:dev",
+      "endpoint": "localhost:50051 (gRPC)",
+      "ports": [
+        {
+          "host": 50051,
+          "container": 50051,
+          "protocol": "tcp"
+        }
+      ],
+      "env": [
+        {
+          "name": "DATABASE_URL",
+          "source": "service-ref",
+          "value": "postgres"
+        },
+        {
+          "name": "REDIS_URL",
+          "source": "service-ref",
+          "value": "redis"
+        }
+      ],
+      "health": {
+        "check": "grpc.health.v1 SERVING",
+        "status": "healthy",
+        "durationMs": 1230
+      },
+      "readyMs": 1310,
+      "requestCount": 4,
+      "artifacts": [
+        {
+          "kind": "proto",
+          "source": "proto/inventory/v1/inventory.proto",
+          "description": "descriptor para decodificar mensajes en el reporte",
+          "startOffsetMs": 3380,
+          "durationMs": 12,
+          "status": "applied"
+        },
+        {
+          "kind": "seed",
+          "source": "./seeds/stock.json",
+          "description": "stock inicial de 20 SKU vía SetStock",
+          "startOffsetMs": 3392,
+          "durationMs": 68,
+          "status": "applied"
+        }
+      ],
+      "dependsOn": [
+        "postgres",
+        "redis"
+      ]
+    },
+    {
+      "name": "api",
+      "mode": "connected",
+      "host": "api.example.com",
+      "endpoint": "https://api.example.com",
+      "version": "api-pedidos 2.14.0 · commit 9f3c1ab",
+      "tls": {
+        "version": "1.3",
+        "validUntil": "2027-02-14"
+      },
+      "health": {
+        "check": "GET /healthz",
+        "status": "healthy",
+        "durationMs": 84
+      },
+      "requestCount": 19
+    },
+    {
+      "name": "payments",
+      "mode": "connected",
+      "host": "payments.example.com",
+      "endpoint": "https://payments.example.com/sandbox",
+      "version": "sandbox v3",
+      "tls": {
+        "version": "1.3",
+        "validUntil": "2027-03-02"
+      },
+      "health": {
+        "check": "GET /sandbox/status",
+        "status": "healthy",
+        "durationMs": 71
+      },
+      "requestCount": 1
+    }
+  ],
+  "timeline": [
+    {
+      "kind": "service.up",
+      "label": "postgres",
+      "ref": "postgres",
+      "startOffsetMs": 0,
+      "durationMs": 2140
+    },
+    {
+      "kind": "service.up",
+      "label": "redis",
+      "ref": "redis",
+      "startOffsetMs": 0,
+      "durationMs": 610
+    },
+    {
+      "kind": "artifact.apply",
+      "label": "postgres · *.sql",
+      "ref": "./db/migrations/*.sql",
+      "startOffsetMs": 2140,
+      "durationMs": 470
+    },
+    {
+      "kind": "service.up",
+      "label": "inventory",
+      "ref": "inventory",
+      "startOffsetMs": 2150,
+      "durationMs": 1230
+    },
+    {
+      "kind": "artifact.apply",
+      "label": "postgres · usuarios.sql",
+      "ref": "./db/seeds/usuarios.sql",
+      "startOffsetMs": 2610,
+      "durationMs": 50
+    },
+    {
+      "kind": "artifact.apply",
+      "label": "postgres · catalogo.sql",
+      "ref": "./db/seeds/catalogo.sql",
+      "startOffsetMs": 2660,
+      "durationMs": 40
+    },
+    {
+      "kind": "artifact.apply",
+      "label": "inventory · inventory.proto",
+      "ref": "proto/inventory/v1/inventory.proto",
+      "startOffsetMs": 3380,
+      "durationMs": 12
+    },
+    {
+      "kind": "artifact.apply",
+      "label": "inventory · stock.json",
+      "ref": "./seeds/stock.json",
+      "startOffsetMs": 3392,
+      "durationMs": 68
+    },
+    {
+      "kind": "service.check",
+      "label": "api",
+      "ref": "api",
+      "startOffsetMs": 3460,
+      "durationMs": 84
+    },
+    {
+      "kind": "service.check",
+      "label": "payments",
+      "ref": "payments",
+      "startOffsetMs": 3460,
+      "durationMs": 71
+    },
+    {
+      "kind": "build",
+      "label": "handlers (tsx)",
+      "startOffsetMs": 3472,
+      "durationMs": 518
+    },
+    {
+      "kind": "request",
+      "label": "POST /v1/auth/token",
+      "ref": 1,
+      "useCaseId": "UC-01",
+      "startOffsetMs": 4010,
+      "durationMs": 84
+    },
+    {
+      "kind": "request",
+      "label": "GetStock inventory.v1.InventoryService/GetStock",
+      "ref": 2,
+      "useCaseId": "UC-01",
+      "startOffsetMs": 4102,
+      "durationMs": 12
+    },
+    {
+      "kind": "request",
+      "label": "POST /v1/orders",
+      "ref": 3,
+      "useCaseId": "UC-01",
+      "startOffsetMs": 4120,
+      "durationMs": 146
+    },
+    {
+      "kind": "request",
+      "label": "GetStock inventory.v1.InventoryService/GetStock",
+      "ref": 4,
+      "useCaseId": "UC-01",
+      "startOffsetMs": 4274,
+      "durationMs": 9
+    },
+    {
+      "kind": "request",
+      "label": "SELECT orders WHERE id = $1",
+      "ref": 5,
+      "useCaseId": "UC-01",
+      "startOffsetMs": 4290,
+      "durationMs": 4
+    },
+    {
+      "kind": "request",
+      "label": "GET /v1/orders/ord_01JD3K8Q2Z7W4M",
+      "ref": 6,
+      "useCaseId": "UC-02",
+      "startOffsetMs": 4310,
+      "durationMs": 31
+    },
+    {
+      "kind": "request",
+      "label": "GET /v1/orders/ord_01JD3K8Q2Z7W4M",
+      "ref": 7,
+      "useCaseId": "UC-02",
+      "startOffsetMs": 4348,
+      "durationMs": 7
+    },
+    {
+      "kind": "request",
+      "label": "POST /v1/auth/token",
+      "ref": 8,
+      "useCaseId": "UC-03",
+      "startOffsetMs": 4362,
+      "durationMs": 79
+    },
+    {
+      "kind": "request",
+      "label": "DELETE /v1/orders/ord_01JD3K8Q2Z7W4M",
+      "ref": 9,
+      "useCaseId": "UC-03",
+      "startOffsetMs": 4448,
+      "durationMs": 18
+    },
+    {
+      "kind": "request",
+      "label": "CONNECT wss://api.example.com/v1/events",
+      "ref": 10,
+      "useCaseId": "UC-04",
+      "startOffsetMs": 4475,
+      "durationMs": 1240
+    },
+    {
+      "kind": "request",
+      "label": "POST /v1/auth/token",
+      "ref": 11,
+      "useCaseId": "UC-04",
+      "startOffsetMs": 4490,
+      "durationMs": 81
+    },
+    {
+      "kind": "request",
+      "label": "PATCH /v1/orders/ord_01JD3K8Q2Z7W4M/status",
+      "ref": 12,
+      "useCaseId": "UC-04",
+      "startOffsetMs": 4580,
+      "durationMs": 62
+    },
+    {
+      "kind": "request",
+      "label": "MESSAGE ← order.status_changed",
+      "ref": 13,
+      "useCaseId": "UC-04",
+      "startOffsetMs": 4651,
+      "durationMs": 2
+    },
+    {
+      "kind": "request",
+      "label": "QUERY SearchProducts",
+      "ref": 14,
+      "useCaseId": "UC-05",
+      "startOffsetMs": 5730,
+      "durationMs": 54
+    },
+    {
+      "kind": "request",
+      "label": "QUERY SearchProductsInvalid",
+      "ref": 15,
+      "useCaseId": "UC-05",
+      "startOffsetMs": 5792,
+      "durationMs": 11
+    },
+    {
+      "kind": "request",
+      "label": "SetStock inventory.v1.InventoryService/SetStock",
+      "ref": 16,
+      "useCaseId": "UC-06",
+      "startOffsetMs": 5810,
+      "durationMs": 8
+    },
+    {
+      "kind": "request",
+      "label": "ReserveStock inventory.v1.InventoryService/ReserveStock",
+      "ref": 17,
+      "useCaseId": "UC-06",
+      "startOffsetMs": 5822,
+      "durationMs": 14
+    },
+    {
+      "kind": "request",
+      "label": "POST /v1/orders",
+      "ref": 18,
+      "useCaseId": "UC-07",
+      "startOffsetMs": 5845,
+      "durationMs": 133
+    },
+    {
+      "kind": "request",
+      "label": "POST /v1/orders/ord_01JD3KC4N1P8VX/payments",
+      "ref": 19,
+      "useCaseId": "UC-07",
+      "startOffsetMs": 5985,
+      "durationMs": 412
+    },
+    {
+      "kind": "request",
+      "label": "GET /v1/orders/ord_01JD3KC4N1P8VX",
+      "ref": 20,
+      "useCaseId": "UC-07",
+      "startOffsetMs": 6405,
+      "durationMs": 22
+    },
+    {
+      "kind": "request",
+      "label": "POST /v1/auth/token",
+      "ref": 21,
+      "useCaseId": "UC-09",
+      "startOffsetMs": 6440,
+      "durationMs": 71
+    },
+    {
+      "kind": "request",
+      "label": "POST /v1/auth/token",
+      "ref": 22,
+      "useCaseId": "UC-09",
+      "startOffsetMs": 6520,
+      "durationMs": 68
+    },
+    {
+      "kind": "request",
+      "label": "POST /v1/auth/token",
+      "ref": 23,
+      "useCaseId": "UC-09",
+      "startOffsetMs": 6600,
+      "durationMs": 74
+    },
+    {
+      "kind": "request",
+      "label": "POST /v1/auth/token",
+      "ref": 24,
+      "useCaseId": "UC-09",
+      "startOffsetMs": 6684,
+      "durationMs": 6
+    },
+    {
+      "kind": "teardown",
+      "label": "contenedores provisionados",
+      "startOffsetMs": 6700,
+      "durationMs": 650
+    }
+  ]
+}

@@ -1,0 +1,703 @@
+<title>{{TITLE}}</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@600;700;800&display=swap">
+<style>
+/* Layout: cabecera de corrida → resumen → casos de uso → línea de tiempo (waterfall) + panel de detalle fijo a la derecha en pantallas anchas */
+:root{
+  --bg:#f3f5f8; --surface:#ffffff; --surface-2:#f8f9fb; --ink:#121720; --muted:#5a6475; --faint:#8a93a3; --line:#dde2ea; --line-2:#eaedf2;
+  --accent:#2b4fd6; --accent-soft:#e7ecfd;
+  --http:#2563eb; --grpc:#7c3aed; --graphql:#c0267a; --ws:#c26a05; --sql:#0d8a7f; --infra:#94a0b4;
+  --pass:#15803d; --pass-soft:#e4f4e9; --fail:#d42a2a; --fail-soft:#fde8e8; --pend:#a15c07; --pend-soft:#fbf0dc;
+  --code-bg:#f6f7fa; --k:#7c3aed; --s:#0d7a4f; --n:#b4520a; --b:#2563eb;
+  --f-display:"Schibsted Grotesk","IBM Plex Sans",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0d1015; --surface:#151a22; --surface-2:#1a2029; --ink:#e5e9f0; --muted:#9ba5b6; --faint:#6f798b; --line:#29303c; --line-2:#212833;
+  --accent:#7d98ff; --accent-soft:#1e2846;
+  --http:#5b8dff; --grpc:#a780ff; --graphql:#f05aa6; --ws:#f0a03c; --sql:#2fc4b4; --infra:#5d6a80;
+  --pass:#4ccb7a; --pass-soft:#14301f; --fail:#ff6b6b; --fail-soft:#3a1719; --pend:#e8a948; --pend-soft:#35270f;
+  --code-bg:#11151c; --k:#b99bff; --s:#5fd39a; --n:#f2a65a; --b:#7fa6ff; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0d1015; --surface:#151a22; --surface-2:#1a2029; --ink:#e5e9f0; --muted:#9ba5b6; --faint:#6f798b; --line:#29303c; --line-2:#212833;
+  --accent:#7d98ff; --accent-soft:#1e2846;
+  --http:#5b8dff; --grpc:#a780ff; --graphql:#f05aa6; --ws:#f0a03c; --sql:#2fc4b4; --infra:#5d6a80;
+  --pass:#4ccb7a; --pass-soft:#14301f; --fail:#ff6b6b; --fail-soft:#3a1719; --pend:#e8a948; --pend-soft:#35270f;
+  --code-bg:#11151c; --k:#b99bff; --s:#5fd39a; --n:#f2a65a; --b:#7fa6ff; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 48px}
+.wrap{max-width:1440px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+.mono{font-family:var(--f-mono);font-size:12.5px}
+.num{font-variant-numeric:tabular-nums}
+h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;letter-spacing:-.01em}
+h2{font-size:18px}
+.eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* Cabecera */
+.runhead{display:flex;flex-wrap:wrap;gap:16px 28px;align-items:flex-end;justify-content:space-between;padding-bottom:16px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:8px;font-family:var(--f-mono);font-size:12px;color:var(--muted)}
+.brand b{color:var(--ink);font-weight:600}
+.logo{width:18px;height:18px;border-radius:4px;background:var(--ink);display:grid;place-items:center;color:var(--bg);font-weight:700;font-size:11px}
+.runhead h1{font-size:clamp(24px,3.4vw,34px);margin-top:6px;font-weight:800}
+.runhead h1 span{color:var(--muted);font-weight:600}
+.runmeta{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:8px;color:var(--muted);font-size:13px}
+.runmeta code{font-family:var(--f-mono);font-size:12px;color:var(--ink)}
+.verdict{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:var(--fail-soft);color:var(--fail);font-weight:600}
+.verdict .dot{width:10px;height:10px;border-radius:50%;background:var(--fail)}
+.verdict.passed{background:var(--pass-soft);color:var(--pass)} .verdict.passed .dot{background:var(--pass)}
+.verdict small{display:block;font-weight:400;color:var(--muted);font-size:12px}
+
+/* Resumen */
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.stat .big{font-family:var(--f-display);font-size:28px;font-weight:700;line-height:1}
+.stat .sub{color:var(--muted);font-size:12.5px}
+.seg{display:flex;height:8px;border-radius:4px;overflow:hidden;gap:2px;background:var(--line-2)}
+.seg i{display:block;height:100%}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.sw{width:9px;height:9px;border-radius:2px;display:inline-block}
+
+/* Servicios */
+.services{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}
+.svc-group{display:flex;flex-direction:column;gap:8px}
+.svc-group-h{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}
+.svc-group-h h3{font-size:14.5px}
+.svc-group-h p{margin:0;color:var(--muted);font-size:12.5px}
+.services{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,330px),1fr));gap:10px}
+.svc{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:9px;min-width:0}
+.svc.conn{border-style:dashed}
+.svc-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.svc-top .st{width:8px;height:8px;border-radius:50%;background:var(--pass);flex:none}
+.svc-top b{font-family:var(--f-mono);font-size:13.5px;font-weight:600}
+.svc-top .t{margin-left:auto;font-size:12px;color:var(--muted)}
+.kind{font-size:11px;font-weight:600;padding:1px 7px;border-radius:4px;background:var(--surface-2);color:var(--muted);border:1px solid var(--line)}
+.kind.prov{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+.svc dl{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:0;font-size:12.5px}
+.svc dt{color:var(--muted);font-size:11.5px;padding-top:1px}
+.svc dd{margin:0;font-family:var(--f-mono);font-size:12px;overflow-wrap:anywhere;min-width:0}
+.arts{display:flex;flex-direction:column;gap:5px;border-top:1px dashed var(--line);padding-top:8px}
+.arts .h{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.art{display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px;align-items:baseline;font-size:12.5px}
+.art .ak{font-family:var(--f-mono);font-size:10.5px;font-weight:600;padding:0 5px;border-radius:3px;background:var(--pass-soft);color:var(--pass);text-transform:uppercase}
+.art code{font-family:var(--f-mono);font-size:11.5px;overflow-wrap:anywhere;min-width:0}
+.art .ad{grid-column:2/4;color:var(--muted);font-size:12px}
+.art .at{color:var(--faint);font-family:var(--f-mono);font-size:11px}
+.svc .unmanaged{font-size:12px;color:var(--muted);background:var(--surface-2);border-radius:6px;padding:6px 8px}
+
+.section-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px 16px}
+.section-head p{margin:2px 0 0;color:var(--muted);font-size:13px;max-width:70ch}
+
+/* Casos de uso */
+.ucs{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,420px),1fr));gap:12px}
+.uc{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px 14px 18px;display:flex;flex-direction:column;gap:10px;cursor:pointer;position:relative;text-align:left;min-width:0}
+.uc::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--c)}
+.uc[data-s="pass"]{--c:var(--pass)} .uc[data-s="fail"]{--c:var(--fail)} .uc[data-s="pend"]{--c:var(--pend)}
+.uc:hover{border-color:var(--faint)}
+.uc[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.uc-top{display:flex;gap:10px;align-items:flex-start;justify-content:space-between}
+.uc h3{font-size:15.5px;font-weight:700}
+.uc .id{font-family:var(--f-mono);font-size:11px;color:var(--faint)}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.pill.pass{background:var(--pass-soft);color:var(--pass)} .pill.fail{background:var(--fail-soft);color:var(--fail)} .pill.pend{background:var(--pend-soft);color:var(--pend)}
+.gwt{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:13px;margin:0}
+.gwt dt{font-family:var(--f-mono);font-size:11px;color:var(--faint);text-transform:uppercase;padding-top:2px}
+.gwt dd{margin:0;min-width:0}
+.verbs{display:flex;flex-wrap:wrap;gap:6px}
+.verb{display:inline-flex;align-items:stretch;border-radius:5px;overflow:hidden;font-family:var(--f-mono);font-size:11.5px;border:1px solid var(--line);max-width:100%}
+.verb .m{background:var(--pc);color:#fff;padding:1px 6px;font-weight:600;white-space:nowrap}
+.verb .p{padding:1px 7px;color:var(--ink);background:var(--surface-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.uc-foot{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--muted);border-top:1px dashed var(--line);padding-top:8px}
+.explain{background:var(--fail-soft);border-radius:6px;padding:8px 10px;font-size:12.5px;color:var(--ink)}
+.explain b{color:var(--fail)}
+.explain small{display:block;color:var(--muted);margin-top:4px;font-size:11.5px}
+.pending-box{background:var(--pend-soft);border-radius:6px;padding:8px 10px;font-size:12.5px}
+.pending-box code{font-family:var(--f-mono);font-size:11.5px}
+
+/* Herramientas */
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 10px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.chip[aria-pressed="false"]{opacity:.5}
+.chip[aria-pressed="false"] .sw{background:transparent!important;outline:1px solid var(--faint)}
+.seg-btns{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg-btns button{border:0;background:var(--surface);padding:4px 10px;font-size:12px;cursor:pointer}
+.seg-btns button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.clear{border:0;background:none;color:var(--accent);cursor:pointer;font-size:12.5px;padding:2px 4px}
+
+/* Línea de tiempo + detalle */
+.work{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}
+@media (min-width:1180px){.work{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .detail{position:sticky;top:calc(env(safe-area-inset-top,0px) + 12px);max-height:calc(100vh - 24px);overflow:auto}}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;min-width:0}
+.tl-scroll{overflow-x:auto}
+.tl{min-width:680px;padding:10px 0 12px}
+.tl-axis,.tl-row,.tl-group{display:grid;grid-template-columns:270px 1fr;align-items:center}
+.tl-axis{position:relative;height:24px;border-bottom:1px solid var(--line);margin-bottom:4px}
+.tl-axis .ticks{position:relative;height:100%;margin-right:16px}
+.tl-axis .tick{position:absolute;bottom:4px;transform:translateX(-50%);font-family:var(--f-mono);font-size:10.5px;color:var(--faint)}
+.tl-group{padding:8px 0 3px}
+.tl-group .g{padding-left:14px;font-size:12px;font-weight:600;display:flex;gap:6px;align-items:center;min-width:0}
+.tl-group .g span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-group .g .d{width:7px;height:7px;border-radius:50%;flex:none}
+.tl-row{height:26px;cursor:pointer;border-left:3px solid transparent}
+.tl-row:hover{background:var(--surface-2)}
+.tl-row[aria-selected="true"]{background:var(--accent-soft);border-left-color:var(--accent)}
+.tl-row .lbl{display:flex;align-items:center;gap:6px;padding-left:12px;min-width:0;font-family:var(--f-mono);font-size:11.5px}
+.tl-row .lbl .m{font-weight:600;color:var(--pc);flex:none;min-width:46px}
+.tl-row .lbl .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.tl-row .lbl .x{color:var(--fail);font-weight:700;flex:none}
+.track{position:relative;height:100%;margin-right:16px}
+.grid-line{position:absolute;top:0;bottom:0;width:1px;background:var(--line-2)}
+.bar{position:absolute;top:7px;height:12px;border-radius:2px;background:var(--pc);min-width:3px}
+.bar.fail{box-shadow:0 0 0 2px var(--fail-soft),0 0 0 3px var(--fail)}
+.bar.open{background:repeating-linear-gradient(90deg,var(--pc) 0 6px,transparent 6px 9px);opacity:.75}
+.bar-lbl{position:absolute;top:5px;font-family:var(--f-mono);font-size:10.5px;color:var(--muted);white-space:nowrap}
+.tl-row.infra .lbl .m{color:var(--muted)}
+.tl-foot{display:flex;flex-wrap:wrap;gap:6px 16px;padding:8px 14px 0;border-top:1px solid var(--line-2);margin-top:8px}
+
+/* Detalle */
+.detail{padding:0}
+.d-head{padding:16px 18px 14px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+.d-proto{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.badge{font-family:var(--f-mono);font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;color:#fff;background:var(--pc);letter-spacing:.02em}
+.badge.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+.d-target{font-family:var(--f-mono);font-size:14px;word-break:break-all;line-height:1.45}
+.d-target .m{color:var(--pc);font-weight:700;margin-right:8px}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px 14px}
+.kv div{display:flex;flex-direction:column;min-width:0}
+.kv dt{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.kv dd{margin:0;font-family:var(--f-mono);font-size:12.5px;overflow-wrap:anywhere}
+.status{font-weight:600}
+.status.ok{color:var(--pass)} .status.warn{color:var(--pend)} .status.bad{color:var(--fail)} .status.info{color:var(--accent)}
+.d-sec{padding:14px 18px;border-bottom:1px solid var(--line-2);display:flex;flex-direction:column;gap:10px}
+.d-sec:last-child{border-bottom:0}
+.d-sec h4{margin:0;font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.d-sec h4 em{font-style:normal;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400;font-size:12px}
+.anns{display:flex;flex-wrap:wrap;gap:6px}
+.ann{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;font-size:12.5px;max-width:100%}
+.ann .k{padding:2px 8px;background:var(--accent-soft);color:var(--accent);font-family:var(--f-mono);font-size:11.5px;font-weight:600;display:flex;align-items:center}
+.ann .v{padding:2px 8px;overflow-wrap:anywhere}
+.ann.sys .k{background:var(--surface-2);color:var(--muted)}
+.asserts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.asserts li{display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:13px;align-items:start}
+.asserts .ic{font-weight:700;text-align:center}
+.asserts .ok .ic{color:var(--pass)} .asserts .ko .ic{color:var(--fail)}
+.asserts code{font-family:var(--f-mono);font-size:12px}
+.asserts .diff{grid-column:2;display:grid;grid-template-columns:auto 1fr;gap:1px 8px;font-family:var(--f-mono);font-size:12px;background:var(--fail-soft);border-radius:5px;padding:6px 8px}
+.asserts .diff .e{color:var(--pass)} .asserts .diff .g{color:var(--fail)}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin:0 -18px;padding:0 18px}
+.tabs button{border:0;background:none;padding:6px 10px;font-size:12.5px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink);font-weight:600}
+table.hdr{width:100%;border-collapse:collapse;font-family:var(--f-mono);font-size:12px}
+table.hdr td{padding:4px 0;border-bottom:1px solid var(--line-2);vertical-align:top}
+table.hdr td:first-child{color:var(--muted);padding-right:14px;white-space:nowrap;width:1%}
+table.hdr td:last-child{overflow-wrap:anywhere;word-break:break-word}
+.mask.shown{background:var(--fail-soft);color:var(--fail)}
+.reveal{margin-left:auto;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.reveal[aria-pressed="true"]{background:var(--fail-soft);border-color:transparent;color:var(--fail);font-weight:600}
+.reveal svg{width:14px;height:14px}
+.mask{background:var(--pend-soft);color:var(--pend);border-radius:3px;padding:0 4px;font-size:10.5px;margin-left:6px;font-family:var(--f-body)}
+.code-wrap{position:relative}
+pre.code{margin:0;background:var(--code-bg);border:1px solid var(--line-2);border-radius:6px;padding:10px 12px;font-family:var(--f-mono);font-size:12px;line-height:1.55;overflow:auto;max-height:360px;white-space:pre}
+pre.code .k{color:var(--k)} pre.code .s{color:var(--s)} pre.code .n{color:var(--n)} pre.code .b{color:var(--b)} pre.code .c{color:var(--faint)}
+.note{font-size:12px;color:var(--muted)}
+.copy{border:1px solid var(--line);background:var(--surface);border-radius:5px;font-size:11.5px;padding:2px 8px;cursor:pointer;text-transform:none;letter-spacing:0;color:var(--ink);font-weight:500}
+.empty{padding:40px 20px;text-align:center;color:var(--muted)}
+.howto{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;padding:16px 18px}
+@media (max-width:860px){.howto{grid-template-columns:minmax(0,1fr)}}
+.howto p{margin:0 0 8px;font-size:13px;color:var(--muted);max-width:62ch}
+.keys{display:flex;flex-direction:column;gap:6px}
+.keys .row{display:grid;grid-template-columns:110px 1fr auto;gap:10px;font-size:12.5px;align-items:baseline;border-bottom:1px solid var(--line-2);padding-bottom:5px}
+.keys .row code{font-family:var(--f-mono);color:var(--accent);font-weight:600;font-size:12px}
+.keys .row span:last-child{color:var(--faint);font-family:var(--f-mono);font-size:11.5px}
+@media (max-width:560px){
+  .tl-axis,.tl-row,.tl-group{grid-template-columns:190px 1fr}
+  .stat .big{font-size:24px}
+}
+@media (prefers-reduced-motion:no-preference){.bar{transition:left .25s ease,width .25s ease}}
+</style>
+
+<div class="wrap">
+
+  <header class="runhead">
+    <div>
+      <div class="brand"><span class="logo">t</span><b>testmania</b> <span id="h-version"></span> · reporte de corrida</div>
+      <h1><span id="h-suite" style="color:inherit;font-weight:inherit"></span> <span id="h-run"></span></h1>
+      <div class="runmeta" id="h-meta"></div>
+    </div>
+    <div class="verdict" id="h-verdict" role="status"></div>
+  </header>
+
+  <section class="summary" aria-label="Resumen">
+    <div class="stat">
+      <span class="eyebrow">Casos de uso</span>
+      <span class="big num" id="st-uc"></span>
+      <div class="seg" id="st-uc-seg" aria-hidden="true"></div>
+      <div class="legend" id="st-uc-lg"></div>
+    </div>
+    <div class="stat">
+      <span class="eyebrow">Requests</span>
+      <span class="big num" id="st-req"></span>
+      <div class="seg" id="st-proto" aria-hidden="true"></div>
+      <div class="legend" id="st-proto-lg"></div>
+    </div>
+    <div class="stat">
+      <span class="eyebrow">Aserciones</span>
+      <span class="big num" id="st-as">—</span>
+      <span class="sub" id="st-as-sub"></span>
+    </div>
+    <div class="stat">
+      <span class="eyebrow">Duración</span>
+      <span class="big num" id="st-dur"></span>
+      <span class="sub" id="st-dur-sub"></span>
+    </div>
+  </section>
+
+
+  <section aria-labelledby="h-uc" style="display:flex;flex-direction:column;gap:12px">
+    <div class="section-head">
+      <div><h2 id="h-uc">Casos de uso</h2><p>Cada caso viene del manifiesto (given / when / then) y muestra los verbos que ejecutó su handler. Selecciona uno para filtrar la línea de tiempo.</p></div>
+      <div class="toolbar"><span class="note" id="uc-filter-note"></span><button class="clear" id="uc-clear" hidden>Ver todos</button></div>
+    </div>
+    <div class="ucs" id="ucs"></div>
+  </section>
+
+  <section aria-labelledby="h-tl" style="display:flex;flex-direction:column;gap:12px">
+    <div class="section-head">
+      <div><h2 id="h-tl">Línea de tiempo de requests</h2><p>Todos los requests de la corrida en orden, medidos desde el inicio. Las barras con borde rojo tienen aserciones fallidas; las rayadas son conexiones que quedaron abiertas.</p></div>
+      <div class="toolbar">
+        <div id="proto-filter" class="toolbar"></div>
+        <div class="seg-btns" role="group" aria-label="Rango"><button id="z-tests" aria-pressed="true">Solo pruebas</button><button id="z-all" aria-pressed="false">Corrida completa</button></div>
+      </div>
+    </div>
+    <div class="work">
+      <div class="panel">
+        <div class="tl-scroll"><div class="tl" id="tl"></div></div>
+      </div>
+      <aside class="panel detail" id="detail" aria-live="polite"></aside>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-svc" style="display:flex;flex-direction:column;gap:10px">
+    <div class="section-head"><div><h2 id="h-svc">Servicios</h2><p>Lo que declara la sección <code class="mono">services</code> del manifiesto. testmania provisiona algunos servicios como contenedores de Podman, con sus artefactos (migraciones, seeds, descriptores), y se conecta a otros que ya existen en hosts externos.<span id="svc-env"></span></p></div></div>
+    <div class="svc-group"><div class="svc-group-h"><h3>Provisionados por testmania</h3><p id="svc-prov-note"></p></div><div class="services" id="services-prov"></div></div>
+    <div class="svc-group"><div class="svc-group-h"><h3>Procesos locales</h3><p>Comandos que testmania corre en esta máquina, sin contenedor. Se detienen al terminar.</p></div><div class="services" id="services-proc"></div></div>
+    <div class="svc-group"><div class="svc-group-h"><h3>Conectados</h3><p>Servicios que ya existen en hosts externos. testmania solo verifica que respondan; no los levanta, no les carga datos y no los detiene.</p></div><div class="services" id="services-conn"></div></div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-ann">
+    <div class="d-sec" style="border-bottom:1px solid var(--line)"><h2 id="h-ann">Anotaciones del desarrollador</h2></div>
+    <div class="howto">
+      <div>
+        <p>Las anotaciones son pares clave/valor libres que el desarrollador agrega a cada request desde el handler. testmania no las interpreta: las guarda junto al request y las muestra en el reporte, para saber con qué usuario, perfil o dato se hizo cada llamada. También se pueden filtrar en la salida JSON.</p>
+        <pre class="code" id="ann-code"></pre>
+      </div>
+      <div>
+        <p>Claves usadas en esta corrida</p>
+        <div class="keys" id="ann-keys"></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script type="application/json" id="report-data">/*REPORT_JSON*/</script>
+<script>
+const PROTO = {
+  http:{label:"HTTP", color:"var(--http)", hdr:"Headers", body:"Body", rhdr:"Headers de respuesta", rbody:"Body de respuesta"},
+  grpc:{label:"gRPC", color:"var(--grpc)", hdr:"Metadata", body:"Mensaje (protobuf → JSON)", rhdr:"Metadata de respuesta", rbody:"Mensaje de respuesta"},
+  graphql:{label:"GraphQL", color:"var(--graphql)", hdr:"Headers", body:"Operación y variables", rhdr:"Headers de respuesta", rbody:"Resultado (data / errors)"},
+  ws:{label:"WebSocket", color:"var(--ws)", hdr:"Headers del handshake", body:"Frame enviado", rhdr:"Headers del handshake (respuesta)", rbody:"Frames recibidos"},
+  sql:{label:"SQL", color:"var(--sql)", hdr:"Conexión", body:"Sentencia y parámetros", rhdr:"Resumen", rbody:"Filas"},
+  infra:{label:"Podman", color:"var(--infra)"}
+};
+
+/* ---------- datos: el reporte JSON (schema 1.0) ---------- */
+const RAW = JSON.parse(document.getElementById("report-data").textContent);
+/* El JSON trae los valores reales (secrets). La vista los oculta en todo texto hasta que se pulsa "Mostrar valores sensibles". */
+const SECRET_VALUES = Object.values(RAW.secrets||{}).filter(v=>typeof v==="string"&&v.length>=4).sort((a,b)=>b.length-a.length);
+const maskKnown = s=>SECRET_VALUES.reduce((a,v)=>a.split(v).join("••••"), s);
+const maskDeep = v=>typeof v==="string"?maskKnown(v):Array.isArray(v)?v.map(maskDeep):v&&typeof v==="object"?Object.fromEntries(Object.entries(v).map(([k,x])=>[k,k==="secrets"?x:maskDeep(x)])):v;
+const REPORT = maskDeep(RAW);
+const RAW_REQ = new Map((RAW.requests||[]).map(r=>[r.id,r]));
+const assertRows = as=>as.map(a=>[a.expression, a.passed?1:0, a.expected!=null?(typeof a.expected==="string"?a.expected:JSON.stringify(a.expected)):undefined, a.actual!=null?(typeof a.actual==="string"?a.actual:JSON.stringify(a.actual)):undefined]);
+const RUN = REPORT.run;
+const SECRETS = REPORT.secrets || {};
+const HAS_SECRETS = Object.keys(SECRETS).length > 0;
+const fmtMs = n=>n>=1000?(n/1000).toFixed(2).replace(".",",")+" s":Math.round(n)+" ms";
+const fmtBytes = b=>b==null?"—":b<1024?b+" B":(b/1024).toFixed(1).replace(".",",")+" KB";
+const escT = s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const ART_LABEL = {migration:"migración", seed:"seed", proto:"proto", stub:"stubs", file:"archivo"};
+const ENV_SRC = {inferred:" (inferida)", "service-ref":""};
+
+const UCS = REPORT.useCases.map(u=>({
+  id:u.id, title:u.title, s:{passed:"pass",failed:"fail",pending:"pend"}[u.status], file:u.handler.file,
+  given:u.given, when:u.when, then:u.then,
+  explain: u.failure ? escT(u.failure.explanation) : undefined,
+  pending: u.pending ? (u.pending.message || u.pending.reason) : undefined,
+  invocations: u.invocations
+}));
+
+function statusCls(s){
+  if(s.kind==="http") return s.code<300?"ok":s.code<400?"info":"bad";
+  if(s.kind==="grpc") return s.code===0?"ok":"bad";
+  if(s.kind==="graphql") return s.errorCount>0?"warn":"ok";
+  if(s.kind==="ws") return s.event==="handshake"?"info":"ok";
+  return "ok";
+}
+function setPath(obj,path,val){
+  const keys = path.replace(/^\$\.?/,"").split(".").filter(Boolean);
+  if(!keys.length) return val;
+  let o = obj; keys.slice(0,-1).forEach(k=>{ o = o[k]; }); o[keys[keys.length-1]] = val; return obj;
+}
+function bodyView(b){
+  if(!b || b.encoding==="none") return null;
+  if(b.encoding==="sql"){ const v=b.value; return typeof v==="string"?v:v.statement+"\n\n"+(v.params||[]).map((p,i)=>`-- $${i+1} = '${p}'`).join("\n"); }
+  return b.value;
+}
+function bodyReal(b){
+  if(!b || !b.redactions || !b.redactions.length) return bodyView(b);
+  let v = JSON.parse(JSON.stringify(b.value));
+  b.redactions.forEach(x=>{ if(SECRETS[x.secretRef]!=null) v = setPath(v,x.path,SECRETS[x.secretRef]); });
+  return bodyView({...b, value:v});
+}
+const hdrRows = hs=>(hs||[]).map(h=>[h.name, h.value, h.sensitive?1:0, h.secretRef]);
+
+const REQ = REPORT.requests.map(r=>{
+  const res = r.response;
+  let resB = bodyView(res.body), resBReal = bodyReal(res.body);
+  if(res.frames){ resB = resBReal = res.frames.map(f=>({[f.direction==="in"?"←":"→"]:"+"+f.offsetMs+" ms", frame:f.data})); }
+  return {
+    id:r.id, uc:r.useCaseId, proto:r.protocol, verb:r.method, target:r.target, url:r.url, transport:r.transport||"",
+    start:r.startOffsetMs, dur:r.durationMs, open:!!r.open, fail:!r.passed,
+    size: res.sizeBytes!=null ? fmtBytes(res.sizeBytes) : res.frames ? res.frames.length+" frames" : res.status.kind==="sql" ? res.status.rowCount+(res.status.rowCount===1?" fila":" filas") : "—",
+    ann:r.annotations||{}, line:r.handler.line, file:r.handler.file, services:r.services,
+    status:{code:res.status.label, cls:statusCls(res.status)},
+    expected: r.assertions.some(a=>a.expectedFailure),
+    reqH:hdrRows(r.request.headers), reqB:bodyView(r.request.body), reqBReal:bodyReal(r.request.body), reqRedactions:r.request.body.redactions||[],
+    resH:hdrRows(res.headers), resB, resBReal, trailers: res.trailers ? hdrRows(res.trailers) : null,
+    asserts:assertRows(r.assertions), raw:{url:RAW_REQ.get(r.id).url, ann:RAW_REQ.get(r.id).annotations||{}, asserts:assertRows(RAW_REQ.get(r.id).assertions), rep:RAW_REQ.get(r.id).reproduce},
+    rep:r.reproduce, evidence:r.evidence
+  };
+});
+const svcOf = r=>r.services;
+
+const SERVICES = REPORT.services.map(s=>{
+  if(s.mode==="provisioned"){
+    const env = (s.env||[]).map(e=>e.source==="service-ref"?`${e.name} → ${e.value}`:e.sensitive?`${e.name}${ENV_SRC[e.source]||""}`:`${e.name}=${e.value}`).join(", ") || "sin variables";
+    const up = REPORT.timeline.find(t=>t.kind==="service.up" && t.ref===s.name) || {startOffsetMs:0, durationMs:s.health.durationMs};
+    const extra = s.storage ? ["almacenamiento", s.storage==="tmpfs"?"tmpfs, se descarta al terminar":s.storage] : s.dependsOn&&s.dependsOn.length ? ["depende de", s.dependsOn.join(", ")] : null;
+    return {name:s.name, mode:"prov", origin:s.image, endpoint:(s.ports||[]).some(p=>p.host!==p.container)?s.ports.map(p=>`localhost:${p.host} → ${p.container}`).join(", "):s.endpoint,
+      health:`${s.health.check} · listo en ${fmtMs(s.health.durationMs)}`, env, extra, start:up.startOffsetMs, end:up.startOffsetMs+up.durationMs,
+      ready:s.readyMs, proxy:s.proxy, arts:s.artifacts.map(a=>({k:ART_LABEL[a.kind]||a.kind, src:a.source, d:a.description||"", start:a.startOffsetMs, end:a.startOffsetMs+a.durationMs}))};
+  }
+  if(s.mode==="process"){
+    const env = (s.env||[]).map(e=>e.sensitive?`${e.name}${e.fromEnv?" ← $"+e.fromEnv:""}`:`${e.name}=${e.value}`).join(", ") || "sin variables";
+    const up = REPORT.timeline.find(t=>t.kind==="service.up" && t.ref===s.name) || {startOffsetMs:0, durationMs:s.readyMs||s.health.durationMs};
+    const pr = s.process;
+    return {name:s.name, mode:"proc", origin:s.command, endpoint:s.endpoint, health:`${s.health.check} · ${fmtMs(s.health.durationMs)}`, env,
+      extra:["carpeta", s.cwd||"."], pid: pr ? `${pr.pid}`+(pr.stoppedAt?` · detenido${pr.signal?" con "+pr.signal:""}`:" · corriendo")+(pr.log?` · salida en ${pr.log}`:"") : null,
+      deps: s.dependsOn&&s.dependsOn.length ? s.dependsOn.join(", ") : null,
+      proxy:s.proxy, start:up.startOffsetMs, end:up.startOffsetMs+up.durationMs, arts:(s.artifacts||[]).map(a=>({k:ART_LABEL[a.kind]||a.kind, src:a.source, d:a.description||"", start:a.startOffsetMs, end:a.startOffsetMs+a.durationMs}))};
+  }
+  const chk = REPORT.timeline.find(t=>t.kind==="service.check" && t.ref===s.name) || {startOffsetMs:0, durationMs:s.health.durationMs};
+  return {name:s.name, mode:"conn", origin:"host externo "+s.host, endpoint:s.endpoint, health:`${s.health.check} · ${fmtMs(s.health.durationMs)}`,
+    version:s.version, extra: s.tls ? ["TLS", `${s.tls.version} · certificado válido hasta ${new Date(s.tls.validUntil+"T00:00:00Z").toLocaleDateString("es",{day:"numeric",month:"short",year:"numeric",timeZone:"UTC"})}`] : null,
+    proxy:s.proxy, start:chk.startOffsetMs, end:chk.startOffsetMs+chk.durationMs, arts:[]};
+});
+const TL_BUILD = REPORT.timeline.filter(t=>t.kind==="build");
+const TL_TEARDOWN = REPORT.timeline.filter(t=>t.kind==="teardown");
+const T_START = Math.min(...REQ.map(r=>r.start), RUN.durationMs);
+const T_END = Math.max(...REQ.map(r=>r.start+(r.open?0:r.dur)), 0);
+
+/* ---------- cabecera y resumen ---------- */
+(function(){
+  const S = REPORT.summary, u = S.useCases, ph = S.phases;
+  document.title = "Reporte testmania "+REPORT.manifest.suite;
+  document.getElementById("h-version").textContent = REPORT.tool.version;
+  document.getElementById("h-suite").textContent = REPORT.manifest.suite;
+  document.getElementById("h-run").textContent = "· corrida #"+RUN.number;
+  const d = new Date(RUN.startedAt);
+  document.getElementById("h-meta").innerHTML = [
+    `<span>${escT(d.toLocaleDateString("es",{day:"numeric",month:"short",year:"numeric",timeZone:"UTC"}))} · ${d.toISOString().slice(11,19)} UTC</span>`,
+    `<span>Manifiesto <code>${escT(REPORT.manifest.path)}</code> · version <code>"${escT(REPORT.manifest.version)}"</code></span>`,
+    `<span>Ejecución <code>${escT(RUN.mode)}</code> · ${RUN.runtime.engine==="podman"?"Podman":escT(RUN.runtime.engine)} ${escT(RUN.runtime.version)}</span>`,
+    `<span>Comando <code>${escT(RUN.command)}</code></span>`].join("");
+  const v = document.getElementById("h-verdict");
+  v.className = "verdict "+RUN.status;
+  v.innerHTML = `<span class="dot"></span><div>${RUN.status==="passed"?"Todos los casos de uso pasaron":RUN.status==="error"?"La corrida no terminó":u.failed+(u.failed===1?" caso de uso falló":" casos de uso fallaron")}<small>Código de salida ${RUN.exitCode} · ${fmtMs(RUN.durationMs)} en total</small></div>`;
+  document.getElementById("st-uc").textContent = u.total;
+  document.getElementById("st-uc-seg").innerHTML = [["pass",u.passed],["fail",u.failed],["pend",u.pending]].filter(x=>x[1]).map(([k,n])=>`<i style="flex:${n};background:var(--${k})"></i>`).join("");
+  document.getElementById("st-uc-lg").innerHTML = `<span><i class="sw" style="background:var(--pass)"></i>${u.passed} aprobados</span><span><i class="sw" style="background:var(--fail)"></i>${u.failed} fallidos</span><span><i class="sw" style="background:var(--pend)"></i>${u.pending} pendiente${u.pending===1?"":"s"}</span>`;
+  document.getElementById("st-dur").textContent = fmtMs(RUN.durationMs);
+  document.getElementById("st-dur-sub").textContent = `${fmtMs(ph.provisioningMs)} provisionando · ${fmtMs(ph.buildMs)} compilando handlers · ${fmtMs(ph.testsMs)} en pruebas · ${fmtMs(ph.teardownMs)} desmontaje`;
+})();
+
+/* ---------- utilidades ---------- */
+const $ = s=>document.querySelector(s);
+const esc = s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const ms = n=>n>=1000?(n/1000).toFixed(2).replace(".",",")+" s":n+" ms";
+function hl(v){
+  if(v==null) return '<span class="c">// sin body</span>';
+  if(typeof v==="string") return esc(v).replace(/(--[^\n]*)/g,'<span class="c">$1</span>');
+  const j = esc(JSON.stringify(v,null,2));
+  return j.replace(/(&quot;(?:[^&]|&(?!quot;))*?&quot;)(\s*:)?|\b(true|false|null)\b|(-?\b\d+(?:\.\d+)?\b)/g,(m,str,colon,b,n)=>{
+    if(str) return colon?`<span class="k">${str}</span>${colon}`:`<span class="s">${str}</span>`;
+    if(b) return `<span class="b">${b}</span>`;
+    return `<span class="n">${n}</span>`;
+  });
+}
+const ucOf = id=>UCS.find(u=>u.id===id);
+const short = t=>t.replace("inventory.v1.InventoryService/","");
+
+/* ---------- estado ---------- */
+const state = {uc:null, protos:new Set(["http","grpc","graphql","ws","sql"]), zoom:"tests", sel:(REQ.find(r=>r.fail)||REQ[0]||{}).id, tab:"req", reveal:false};
+
+/* ---------- resumen ---------- */
+(function(){
+  const counts = {}; REQ.forEach(r=>counts[r.proto]=(counts[r.proto]||0)+1);
+  $("#st-req").textContent = REQ.length;
+  $("#st-proto").innerHTML = Object.keys(counts).map(p=>`<i style="flex:${counts[p]};background:${PROTO[p].color}"></i>`).join("");
+  $("#st-proto-lg").innerHTML = Object.keys(counts).map(p=>`<span><i class="sw" style="background:${PROTO[p].color}"></i>${counts[p]} ${PROTO[p].label}</span>`).join("");
+  const all = REQ.flatMap(r=>r.asserts); const ok = all.filter(a=>a[1]).length;
+  $("#st-as").textContent = ok+" / "+all.length;
+  const fr = REQ.filter(r=>r.fail); $("#st-as-sub").textContent = (all.length-ok)+" fallidas en "+fr.length+" requests de "+new Set(fr.map(r=>r.uc)).size+" casos de uso";
+  const card = s=>{
+    const n = REQ.filter(r=>svcOf(r).includes(s.name)).length;
+    const rows = [[s.mode==="prov"?"imagen":s.mode==="proc"?"comando":"origen",s.origin],["endpoint",s.endpoint],["healthcheck",s.health]];
+    if(s.env) rows.push(["entorno",s.env]); if(s.version) rows.push(["versión",s.version]); if(s.extra) rows.push(s.extra);
+    if(s.pid) rows.push(["pid",s.pid]); if(s.deps) rows.push(["depende de",s.deps]);
+    if(s.proxy) rows.push(["proxy de evidencia", `${s.proxy.engine==="local"?"proceso local"+(s.proxy.pid?" (pid "+s.proxy.pid+")":""):s.proxy.image} · ${s.proxy.listen} → ${s.proxy.upstream}`+(s.proxy.evidence?` · ${s.proxy.evidence}`:"")]);
+    rows.push(["uso en la corrida", n+(n===1?" request":" requests")]);
+    return `<div class="svc ${s.mode}"><div class="svc-top"><span class="st" title="saludable"></span><b>${esc(s.name)}</b>${s.mode==="prov"?'<span class="kind prov">Provisionado · Podman</span>':s.mode==="proc"?'<span class="kind prov">Proceso local</span>':'<span class="kind">Conectado</span>'}<span class="t num">${s.mode!=="conn"?"listo en "+ms((s.arts.length?s.arts[s.arts.length-1].end:s.end)-s.start):"verificado"}</span></div>
+      <dl>${rows.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+      ${s.mode==="proc"?(s.arts.length?`<div class="arts"><span class="h">Artefactos provisionados</span>${s.arts.map(a=>`<div class="art"><span class="ak">${esc(a.k)}</span><code>${esc(a.src)}</code><span class="ad">${esc(a.d)}</span></div>`).join("")}</div>`:'<div class="unmanaged">Proceso de esta máquina: testmania lo levanta en su carpeta, sigue su PID y lo detiene al terminar.</div>'):s.mode==="prov"?(s.arts.length?`<div class="arts"><span class="h">Artefactos provisionados</span>${s.arts.map(a=>`<div class="art"><span class="ak">${esc(a.k)}</span><code>${esc(a.src)}</code><span class="at num">${ms(a.end-a.start)}</span><span class="ad">${esc(a.d)}</span></div>`).join("")}</div>`:'<div class="arts"><span class="h">Artefactos provisionados</span><span class="note">Ninguno. El contenedor arranca vacío.</span></div>'):'<div class="unmanaged">No gestionado: testmania no lo levanta ni lo detiene, y no carga datos en él.</div>'}
+    </div>`;};
+  const prov = SERVICES.filter(s=>s.mode==="prov");
+  $("#services-prov").innerHTML = prov.map(card).join("");
+  $("#services-conn").innerHTML = SERVICES.filter(s=>s.mode==="conn").map(card).join("");
+  $("#services-proc").innerHTML = SERVICES.filter(s=>s.mode==="proc").map(card).join("");
+  $("#services-proc").closest(".svc-group").hidden = !SERVICES.some(s=>s.mode==="proc");
+  $("#svc-env").innerHTML = (REPORT.manifest.envFiles||[]).length ? " Las variables se cargaron desde "+REPORT.manifest.envFiles.map(f=>`<code class="mono">${esc(f)}</code>`).join(", ")+"." : "";
+  $("#services-prov").closest(".svc-group").hidden = !prov.length;
+  $("#services-conn").closest(".svc-group").hidden = !SERVICES.some(s=>s.mode==="conn");
+  $("#svc-prov-note").textContent = prov.length+" contenedores y "+prov.reduce((a,s)=>a+s.arts.length,0)+" artefactos, listos en "+ms(REPORT.summary.phases.provisioningMs)+". Se eliminan al terminar.";
+})();
+
+/* ---------- casos de uso ---------- */
+function verbsOf(uc){
+  const seen = new Map();
+  REQ.filter(r=>r.uc===uc).forEach(r=>{
+    const label = r.proto==="grpc" ? "gRPC" : r.proto==="graphql" ? "GQL "+r.verb : r.proto==="ws" ? "WS "+r.verb : r.proto==="sql" ? "SQL "+r.verb : r.verb;
+    const path = r.proto==="grpc" ? short(r.target) : r.proto==="graphql" ? r.target : r.proto==="ws" ? (r.verb==="CONNECT"?"/v1/events":r.target.replace("← ","")) : r.proto==="sql" ? r.target.split(" ")[0] : r.target;
+    const k = label+" "+path; seen.set(k,{label,path,proto:r.proto,n:(seen.get(k)?.n||0)+1});
+  });
+  return [...seen.values()];
+}
+function renderUCs(){
+  $("#ucs").innerHTML = UCS.map(u=>{
+    const reqs = REQ.filter(r=>r.uc===u.id);
+    const dur = reqs.length ? Math.max(...reqs.map(r=>r.start+r.dur)) - Math.min(...reqs.map(r=>r.start)) : 0;
+    const asr = reqs.flatMap(r=>r.asserts); const ok = asr.filter(a=>a[1]).length;
+    const pill = {pass:'<span class="pill pass">✓ Aprobado</span>',fail:'<span class="pill fail">✕ Fallido</span>',pend:'<span class="pill pend">○ Pendiente</span>'}[u.s];
+    const verbs = verbsOf(u.id).map(v=>`<span class="verb" style="--pc:${PROTO[v.proto].color}"><span class="m">${esc(v.label)}</span><span class="p">${esc(v.path)}${v.n>1?" ×"+v.n:""}</span></span>`).join("");
+    return `<button class="uc" data-s="${u.s}" data-uc="${u.id}" aria-pressed="${state.uc===u.id}">
+      <div class="uc-top"><div><div class="id">${u.id} · ${esc(u.file)}</div><h3>${esc(u.title)}</h3></div>${pill}</div>
+      <dl class="gwt"><dt>given</dt><dd>${esc(u.given)}</dd><dt>when</dt><dd>${esc(u.when)}</dd><dt>then</dt><dd>${esc(u.then)}</dd></dl>
+      ${verbs?`<div class="verbs">${verbs}</div>`:""}
+      ${u.explain?`<div class="explain">${u.explain}<small>Explicación generada por testmania a partir de las aserciones, sin IA.</small></div>`:""}
+      ${u.pending?`<div class="pending-box">${esc(u.pending)} Archivo: <code>${esc(u.file)}</code></div>`:""}
+      <div class="uc-foot num"><span>${reqs.length} requests</span><span>${asr.length?ok+"/"+asr.length+" aserciones":"sin aserciones"}</span><span>${reqs.length?ms(dur):"no ejecutado"}</span></div>
+    </button>`;
+  }).join("");
+  const u = state.uc && ucOf(state.uc);
+  $("#uc-filter-note").textContent = u ? "Filtrando: "+u.id+" "+u.title : "";
+  $("#uc-clear").hidden = !u;
+}
+$("#ucs").addEventListener("click",e=>{
+  const b = e.target.closest(".uc"); if(!b) return;
+  const id = b.dataset.uc; state.uc = state.uc===id ? null : id;
+  const first = REQ.find(r=>r.uc===id);
+  if(state.uc && first){ state.sel = (REQ.find(r=>r.uc===id && r.fail)||first).id; }
+  renderAll();
+  if(state.uc && first) document.getElementById("h-tl").scrollIntoView({behavior:"smooth",block:"start"});
+});
+$("#uc-clear").addEventListener("click",()=>{state.uc=null;renderAll();});
+
+/* ---------- filtros de protocolo ---------- */
+$("#proto-filter").innerHTML = ["http","grpc","graphql","ws","sql"].map(p=>`<button class="chip" data-p="${p}" aria-pressed="true"><i class="sw" style="background:${PROTO[p].color}"></i>${PROTO[p].label}</button>`).join("");
+$("#proto-filter").addEventListener("click",e=>{
+  const b = e.target.closest(".chip"); if(!b) return;
+  const p = b.dataset.p; state.protos.has(p)?state.protos.delete(p):state.protos.add(p);
+  b.setAttribute("aria-pressed",state.protos.has(p)); renderTimeline();
+});
+["tests","all"].forEach(z=>$("#z-"+z).addEventListener("click",()=>{state.zoom=z;$("#z-tests").setAttribute("aria-pressed",z==="tests");$("#z-all").setAttribute("aria-pressed",z==="all");renderTimeline();}));
+
+/* ---------- línea de tiempo ---------- */
+function renderTimeline(){
+  const [t0,t1] = state.zoom==="tests" ? [Math.max(0,Math.floor((T_START-50)/50)*50), Math.ceil((T_END+60)/50)*50] : [0,RUN.durationMs];
+  const span = t1-t0, step = span<=1500?250:span<=4000?500:span<=12000?1000:5000;
+  const x = t=>((t-t0)/(t1-t0)*100);
+  const ticks = []; for(let t=Math.ceil(t0/step)*step;t<=t1;t+=step) ticks.push(t);
+  const grid = ticks.map(t=>`<span class="grid-line" style="left:${x(t)}%"></span>`).join("");
+  let html = `<div class="tl-axis"><div class="eyebrow" style="padding-left:14px">Request</div><div class="ticks">${ticks.map(t=>`<span class="tick num" style="left:${x(t)}%">${t>=1000?(t/1000).toFixed(t%1000?2:0).replace(".",",")+"s":t+"ms"}</span>`).join("")}</div></div>`;
+  const clip = (s,e)=>{const a=Math.max(s,t0),b=Math.min(e,t1);return b<=a?null:[x(a),Math.max(x(b)-x(a),0)];};
+  const shown = REQ.filter(r=>state.protos.has(r.proto) && (!state.uc || r.uc===state.uc));
+  let cur = null;
+  shown.forEach(r=>{
+    if(r.uc!==cur){ cur=r.uc; const u=ucOf(cur); html += `<div class="tl-group"><div class="g"><i class="d" style="background:var(--${u.s})"></i><span>${u.id} · ${esc(u.title)}</span></div><div></div></div>`; }
+    const c = clip(r.start,r.start+r.dur);
+    const lab = r.proto==="grpc"?short(r.target):r.target;
+    const m = r.proto==="grpc"?"gRPC":r.proto==="graphql"?"GQL":r.proto==="sql"?"SQL":r.proto==="ws"?(r.verb==="CONNECT"?"WS":"WS ←"):r.verb;
+    html += `<div class="tl-row" role="button" tabindex="0" data-id="${r.id}" aria-selected="${state.sel===r.id}" style="--pc:${PROTO[r.proto].color}">
+      <div class="lbl"><span class="num" style="color:var(--faint);min-width:20px">${r.id}</span><span class="m">${m}</span><span class="t" title="${esc(lab)}">${esc(lab)}</span>${r.fail?'<span class="x" title="aserción fallida">✕</span>':""}</div>
+      <div class="track">${grid}${c?`<span class="bar${r.fail?" fail":""}${r.open?" open":""}" style="left:${c[0]}%;width:${c[1]}%"></span><span class="bar-lbl num" style="${c[0]+c[1]>84?`right:calc(${100-c[0]}% + 6px)`:`left:calc(${c[0]+c[1]}% + 6px)`}">${r.status.code.split(" ")[0]} · ${ms(r.dur)}</span>`:""}</div></div>`;
+  });
+  if(state.zoom==="all" && !state.uc){ html += `<div class="tl-group" style="border-top:1px solid var(--line);margin-top:8px"><div class="g eyebrow" style="padding-left:14px">Infraestructura de la corrida</div><div></div></div>`;
+    const lane = (m,label,s,e,col)=>{const c=clip(s,e);return `<div class="tl-row infra" style="--pc:${col||"var(--infra)"};cursor:default"><div class="lbl"><span class="m">${m}</span><span class="t" title="${esc(label)}">${esc(label)}</span></div><div class="track">${grid}${c?`<span class="bar" style="left:${c[0]}%;width:${c[1]}%"></span><span class="bar-lbl num" style="${c[0]+c[1]>84?`right:calc(${100-c[0]}% + 6px)`:`left:calc(${c[0]+c[1]}% + 6px)`}">${ms(e-s)}</span>`:""}</div></div>`;};
+    html += `<div class="tl-group"><div class="g"><i class="d" style="background:var(--infra)"></i><span>Provisionamiento (Podman)</span></div><div></div></div>`;
+    SERVICES.filter(s=>s.mode==="prov").forEach(s=>{
+      html += lane("UP",s.name,s.start,s.end);
+      s.arts.forEach(a=>{ html += lane(a.k==="migración"?"MIGRATE":a.k.toUpperCase(),s.name+" · "+a.src.split("/").pop(),a.start,a.end,"var(--pass)"); });
+    });
+    if(SERVICES.some(s=>s.mode==="proc")){
+      html += `<div class="tl-group"><div class="g"><i class="d" style="background:var(--infra)"></i><span>Procesos locales</span></div><div></div></div>`;
+      SERVICES.filter(s=>s.mode==="proc").forEach(s=>{ html += lane("RUN",s.name,s.start,s.end); });
+    }
+    html += `<div class="tl-group"><div class="g"><i class="d" style="background:var(--infra)"></i><span>Servicios conectados</span></div><div></div></div>`;
+    SERVICES.filter(s=>s.mode==="conn").forEach(s=>{ html += lane("CHECK",s.name,s.start,s.end); });
+    html += `<div class="tl-group"><div class="g"><i class="d" style="background:var(--infra)"></i><span>Preparación y cierre</span></div><div></div></div>`;
+    TL_BUILD.forEach(t=>{ html += lane("BUILD",t.label,t.startOffsetMs,t.startOffsetMs+t.durationMs); });
+    TL_TEARDOWN.forEach(t=>{ html += lane("STOP",t.label,t.startOffsetMs,t.startOffsetMs+t.durationMs); });
+  }
+  if(!shown.length) html += `<div class="empty">No hay requests con estos filtros.</div>`;
+  html += `<div class="tl-foot legend">${["http","grpc","graphql","ws","sql"].map(p=>`<span><i class="sw" style="background:${PROTO[p].color}"></i>${PROTO[p].label}</span>`).join("")}<span><i class="sw" style="background:transparent;outline:2px solid var(--fail)"></i>aserción fallida</span><span><i class="sw" style="background:repeating-linear-gradient(90deg,var(--ws) 0 3px,transparent 3px 5px)"></i>conexión abierta</span></div>`;
+  $("#tl").innerHTML = html;
+}
+$("#tl").addEventListener("click",e=>{const r=e.target.closest(".tl-row[data-id]"); if(r) select(+r.dataset.id);});
+$("#tl").addEventListener("keydown",e=>{
+  const r=e.target.closest(".tl-row[data-id]"); if(!r) return;
+  if(e.key==="Enter"||e.key===" "){e.preventDefault();select(+r.dataset.id);}
+  if(e.key==="ArrowDown"||e.key==="ArrowUp"){e.preventDefault();const rows=[...document.querySelectorAll(".tl-row[data-id]")];const i=rows.indexOf(r)+(e.key==="ArrowDown"?1:-1);if(rows[i]){rows[i].focus();select(+rows[i].dataset.id);}}
+});
+function select(id){ state.sel=id; try{history.replaceState(null,"","#r-"+id);}catch(_){location.hash="r-"+id;}
+  document.querySelectorAll(".tl-row[data-id]").forEach(el=>el.setAttribute("aria-selected",+el.dataset.id===id)); renderDetail();
+  if(window.innerWidth<1180) $("#detail").scrollIntoView({behavior:"smooth",block:"start"}); }
+
+/* ---------- detalle ---------- */
+function hdrTable(rows){
+  if(!rows||!rows.length) return '<p class="note">Sin entradas.</p>';
+  return `<table class="hdr"><tbody>${rows.map(([k,v,m,ref])=>`<tr><td>${esc(k)}</td><td>${v==null?'<span class="note">—</span>':esc(m&&state.reveal&&SECRETS[ref]!=null?SECRETS[ref]:v)}${m?(state.reveal&&SECRETS[ref]!=null?'<span class="mask shown">sensible</span>':'<span class="mask">oculto</span>'):""}</td></tr>`).join("")}</tbody></table>`;
+}
+const view = (r,x)=>!state.reveal?x:x===r.reqB?r.reqBReal:x===r.resB?r.resBReal:x;
+const ENV_HEADER = {TOKEN:"authorization", SERVICE_TOKEN:"x-service-token", PGPASSWORD:"password"};
+function reproduce(r){
+  if(!r.rep) return "# testmania no generó un comando para este request";
+  if(!state.reveal) return r.rep.command;
+  let out = (r.raw.rep||r.rep).command;
+  (r.rep.env||[]).forEach(name=>{
+    const h = r.reqH.find(h=>h[0]===ENV_HEADER[name] && h[3]);
+    if(h && SECRETS[h[3]]!=null) out = out.split("$"+name).join(SECRETS[h[3]].replace(/^Bearer /,""));
+  });
+  r.reqRedactions.forEach(x=>{ if(SECRETS[x.secretRef]!=null) out = out.replace(/•{4,}/, SECRETS[x.secretRef]); });
+  return out;
+}
+function renderDetail(){
+  const r = REQ.find(x=>x.id===state.sel);
+  if(!r){ $("#detail").innerHTML = '<div class="empty">Selecciona un request en la línea de tiempo.</div>'; return; }
+  const P = PROTO[r.proto], u = ucOf(r.uc);
+  const statusCls = r.status.cls;
+  const anns = Object.entries(state.reveal?r.raw.ann:r.ann).map(([k,v])=>`<span class="ann"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></span>`).join("");
+  const sys = [["caso",u.id],["handler",r.file.split("/").pop()+(r.line?":"+r.line:"")],["run",RUN.id]].concat(r.evidence?[["evidencia",r.evidence.source+(r.evidence.file?" · "+r.evidence.file+(r.evidence.entry!=null?" #"+r.evidence.entry:""):"")]]:[]).concat([["request-id","tm_"+String(r.id).padStart(3,"0")]]).map(([k,v])=>`<span class="ann sys"><span class="k">${k}</span><span class="v mono">${esc(v)}</span></span>`).join("");
+  const asserts = (state.reveal?r.raw.asserts:r.asserts).map(a=>`<li class="${a[1]?"ok":"ko"}"><span class="ic">${a[1]?"✓":"✕"}</span><code>${esc(a[0])}</code>${!a[1]&&a[2]?`<div class="diff"><span>esperado</span><span class="e">${esc(a[2])}</span><span>recibido</span><span class="g">${esc(a[3])}</span></div>`:""}</li>`).join("");
+  const kindNote = r.transport || PROTO[r.proto].label;
+  const reqPane = `<div class="d-sec" ${state.tab!=="req"?"hidden":""}>
+      <h4>${P.hdr} <em>${r.reqH.length} entradas</em></h4>${hdrTable(r.reqH)}
+      <h4>${P.body} ${r.reqB!=null?'<button class="copy" data-copy="reqB">Copiar</button>':""}</h4><pre class="code">${hl(view(r,r.reqB))}</pre></div>`;
+  const resPane = `<div class="d-sec" ${state.tab!=="res"?"hidden":""}>
+      <h4>Estado</h4><div class="mono status ${statusCls}">${esc(r.status.code)}${r.expected?' <span class="note" style="font-family:var(--f-body);font-weight:400">· esperado por la prueba</span>':""}</div>
+      <h4>${P.rhdr} <em>${r.resH.length} entradas</em></h4>${hdrTable(r.resH)}
+      ${r.trailers?`<h4>Trailers</h4>${hdrTable(r.trailers)}`:""}
+      <h4>${P.rbody} ${r.resB!=null?'<button class="copy" data-copy="resB">Copiar</button>':""}</h4><pre class="code">${hl(view(r,r.resB))}</pre></div>`;
+  const repPane = `<div class="d-sec" ${state.tab!=="rep"?"hidden":""}>
+      <h4>Comando equivalente <button class="copy" data-copy="rep">Copiar</button></h4><pre class="code">${esc(reproduce(r))}</pre>
+      <p class="note" style="margin:0">${state.reveal?"El comando incluye los valores sensibles reales de esta corrida.":"Con los valores sensibles ocultos, los secretos se reemplazan por variables de entorno ($TOKEN, $SERVICE_TOKEN, $PGPASSWORD)."}</p></div>`;
+  $("#detail").innerHTML = `
+    <div class="d-head" style="--pc:${P.color}">
+      <div class="d-proto"><span class="badge">${P.label}</span><span class="badge ghost">${esc(kindNote)}</span>${r.fail?'<span class="pill fail">✕ Aserción fallida</span>':'<span class="pill pass">✓ Aserciones OK</span>'}${HAS_SECRETS?`<button class="reveal" data-reveal aria-pressed="${state.reveal}" title="Tokens, contraseñas y llaves de servicio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/>${state.reveal?'<circle cx="12" cy="12" r="3"/>':'<circle cx="12" cy="12" r="3"/><path d="M3 3l18 18"/>'}</svg>${state.reveal?"Ocultar valores sensibles":"Mostrar valores sensibles"}</button>`:""}</div>
+      <div class="d-target"><span class="m">${esc(r.verb)}</span>${esc(r.proto==="grpc"?r.target:state.reveal?r.raw.url:r.url)}</div>
+      <dl class="kv num" style="margin:0">
+        <div><dt>Estado</dt><dd class="status ${statusCls}">${esc(r.status.code)}</dd></div>
+        <div><dt>Duración</dt><dd>${ms(r.dur)}</dd></div>
+        <div><dt>Inicio</dt><dd>+${ms(r.start)}</dd></div>
+        <div><dt>Tamaño</dt><dd>${esc(r.size)}</dd></div>
+        <div><dt>Servicio</dt><dd>${svcOf(r).map(n=>n+({prov:" (provisionado)",proc:" (proceso local)"}[SERVICES.find(s=>s.name===n).mode]||" (conectado)")).join(" → ")}</dd></div>
+      </dl>
+    </div>
+    <div class="d-sec">
+      <h4>Anotaciones <em>definidas por el desarrollador</em></h4>
+      <div class="anns">${anns}</div>
+      <div class="anns">${sys}</div>
+    </div>
+    <div class="d-sec">
+      <h4>Aserciones <em>${r.asserts.filter(a=>a[1]).length}/${r.asserts.length}</em></h4>
+      <ul class="asserts">${asserts}</ul>
+    </div>
+    <div class="d-sec" style="padding-bottom:0;border-bottom:0">
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="req" aria-selected="${state.tab==="req"}">Request</button>
+        <button role="tab" data-tab="res" aria-selected="${state.tab==="res"}">Response</button>
+        <button role="tab" data-tab="rep" aria-selected="${state.tab==="rep"}">Reproducir</button>
+      </div>
+    </div>
+    ${reqPane}${resPane}${repPane}`;
+}
+$("#detail").addEventListener("click",e=>{
+  if(e.target.closest("[data-reveal]")){ state.reveal=!state.reveal; renderDetail(); return; }
+  const t = e.target.closest("[data-tab]"); if(t){ state.tab=t.dataset.tab; renderDetail(); return; }
+  const c = e.target.closest("[data-copy]"); if(!c) return;
+  const r = REQ.find(x=>x.id===state.sel);
+  const raw = view(r,r[c.dataset.copy]); const v = c.dataset.copy==="rep" ? reproduce(r) : (typeof raw==="string"?raw:JSON.stringify(raw,null,2));
+  const done = ()=>{c.textContent="Copiado";setTimeout(()=>c.textContent="Copiar",1400);};
+  const fallback = ()=>{const pre=c.closest("h4").nextElementSibling;const s=getSelection();const rg=document.createRange();rg.selectNodeContents(pre);s.removeAllRanges();s.addRange(rg);c.textContent="Seleccionado";};
+  try{ navigator.clipboard.writeText(v).then(done,fallback); }catch(_){ fallback(); }
+});
+
+/* ---------- anotaciones: guía ---------- */
+$("#ann-code").innerHTML = hl(
+`// tests/pedidos/crear-pedido.handler.ts
+export default handler("Cliente crea un pedido", async (ctx) => {
+  const maria = await ctx.fixtures.user("maria.gonzalez@acme.test");
+
+  const res = await ctx.http.post("/v1/orders", {
+    auth: maria.token,
+    body: { items: [{ sku: "CAF-ETI-250", qty: 1 }, { sku: "TAZ-CER-01", qty: 1 }] },
+    annotations: {
+      usuario: maria.email,
+      perfil: "cliente",
+      tenant: "tienda-norte",
+      paso: "when",
+      idempotency: "crear-pedido-01",
+    },
+  });
+
+  ctx.expect(res.status).toBe(201);
+});`).replace(/(annotations)/,'<span class="k">$1</span>');
+(function(){
+  const desc = {usuario:"Cuenta usada en la llamada", perfil:"Rol o perfil de esa cuenta", tenant:"Tienda o cliente B2B", paso:"Fase given / when / then", nota:"Comentario libre del autor", intento:"Número de reintento", tarjeta:"Fixture de pago usado", fixture:"Dato precargado", idempotency:"Etiqueta de la clave de idempotencia", "dueño-del-recurso":"Usuario dueño del recurso"};
+  const c = {}; REQ.forEach(r=>Object.keys(r.ann).forEach(k=>c[k]=(c[k]||0)+1));
+  $("#ann-keys").innerHTML = Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([k,n])=>`<div class="row"><code>${esc(k)}</code><span>${esc(desc[k]||"")}</span><span class="num">${n} req.</span></div>`).join("");
+})();
+
+/* ---------- arranque ---------- */
+function renderAll(){ renderUCs(); renderTimeline(); renderDetail(); }
+function fromHash(){ const m = location.hash.match(/^#r-(\d+)$/); if(m && REQ.some(r=>r.id===+m[1])) state.sel=+m[1]; }
+fromHash(); renderAll();
+window.addEventListener("hashchange",()=>{fromHash();renderTimeline();renderDetail();});
+</script>
