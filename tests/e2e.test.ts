@@ -1,10 +1,11 @@
 /**
  * Flujo completo de la skill, como lo sigue el agente:
  *
- *   cases.ts --plan --proxy local → local.ts up → cases.ts → local.ts down → import-har → sync-report → render-report
+ *   cases.ts --only-up-services --proxy local → cases.ts (reutiliza los servicios) → cases.ts --down-services
+ *   → import-har → sync-report → render-report
  *
- * El servicio es un servidor de prueba en este proceso; el proxy de evidencia es scripts/proxy.ts, levantado por
- * local.ts, sin contenedores. Los casos corren con Playwright y Chromium de verdad.
+ * El servicio es un servidor de prueba en este proceso; el proxy de evidencia es scripts/proxy.ts, que cases.ts
+ * levanta con local.ts, sin contenedores. Los casos corren con Playwright y Chromium de verdad.
  * Se omite si Chromium no está instalado (npx playwright install chromium).
  */
 import assert from "node:assert/strict";
@@ -85,6 +86,7 @@ describe("flujo completo", { skip: chromiumError ?? false, timeout: 300_000 }, (
   let p: ReturnType<typeof project>;
   let apiPort: number;
   let proxyPort: number;
+  let proxyPid = 0;
 
   before(async () => {
     api = upstream();
@@ -171,25 +173,33 @@ await defineCase(async () => {
 
   const local = (cmd: string) => runAsync(join(SCRIPTS, "local.ts"), [cmd, "--report", p.reportFile], { cwd: p.dir });
 
-  it("--plan --proxy local registra el servicio y su proxy local, y local.ts lo levanta", async () => {
-    const r = await run(["--plan", "--proxy", "local"]);
+  it("--only-up-services --proxy local registra el servicio y levanta su proxy local, sin correr los casos", async () => {
+    const r = await run(["--only-up-services", "--proxy", "local"]);
     assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /Servicios levantados/);
+    assert.doesNotMatch(r.out, /aserciones ok/);
+    assert.doesNotMatch(r.out, /# A mano/, "cases.ts ya los levantó: no imprime los comandos");
     const svc = p.report().services[0];
     assert.equal(svc.endpoint, `http://127.0.0.1:${apiPort}`);
     assert.equal(svc.proxy.engine, "local");
     assert.equal(svc.proxy.listen, `http://127.0.0.1:${proxyPort}`, "conserva el puerto que ya tenía");
     assert.equal(svc.proxy.upstream, `http://127.0.0.1:${apiPort}`);
     assert.ok(!existsSync(join(p.tc, "compose.yaml")), "sin contenedores no hay compose.yaml");
-    const up = await local("up");
-    assert.equal(up.code, 0, up.out);
-    assert.ok(p.report().services[0].proxy.pid > 0);
+    assert.ok(svc.proxy.pid > 0);
+    proxyPid = svc.proxy.pid;
+    const st = await local("status");
+    assert.equal(st.code, 0, st.out);
   });
 
   let runOut = "";
-  it("corre los casos a través del proxy", async () => {
+  it("sin opciones reutiliza los servicios que ya corren, corre todos los casos y los deja arriba", async () => {
     const r = await run([]);
     runOut = r.out;
     assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /Ya están corriendo con el mismo plan: proxy-api pid \d+/);
+    assert.match(r.out, /Los servicios siguen levantados/);
+    assert.equal(p.report().services[0].proxy.pid, proxyPid, "el plan no pierde el PID del proxy");
+    process.kill(proxyPid, 0); // sigue vivo
     assert.match(r.out, /UC-01 Cliente no puede cancelar un pedido ajeno: 4\/4 aserciones ok/);
     assert.match(r.out, /UC-02 Cliente cancela su propio pedido: 0\/1 aserciones ok/);
     assert.match(r.out, /UC-03 Login con contraseña equivocada: 1\/1 aserciones ok/);
@@ -219,8 +229,9 @@ await defineCase(async () => {
 
   it("importa la evidencia, sincroniza y genera el HTML: el JSON guarda los valores reales y el HTML los oculta", async () => {
     const har = join(p.tc, "evidence", "api.har");
-    const down = await local("down");
+    const down = await run(["--down-services"]);
     assert.equal(down.code, 0, down.out);
+    assert.ok(!existsSync(join(p.tc, "local.pids.json")));
     assert.match(down.out, /proxy-api: pid \d+ detenido \(SIGTERM\)/);
     const raw = readFileSync(har, "utf8");
     assert.ok(raw.includes(PASSWORD), "el HAR crudo sí trae los valores: por eso no se comparte");
