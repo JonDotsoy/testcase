@@ -15,7 +15,7 @@
  *     await then("la API responde 403", () => check("status == 403", res.status(), 403, { expectedFailure: true }));
  *   });
  *
- * Todo se usa con await: defineCase, title, id, given, when y then. Al cargar el archivo, defineCase recorre su función
+ * Todo se usa con await: defineCase, title, describe, id, given, when y then. Al cargar el archivo, defineCase recorre su función
  * sin ejecutar los pasos para registrar el título y los pasos. Al correr el caso la ejecuta de nuevo: cada paso corre
  * en orden y `await given(…)` devuelve lo que devuelve su función. Dentro de un paso se usan las utilidades importadas
  * (`check`, `ensure`, `notation`, `page`, `vars`) y los métodos de sus servicios.
@@ -34,6 +34,17 @@ export type Annotations = Record<string, string | number | boolean>;
 
 export interface RequestOptions {
   headers?: Record<string, string>;
+  /**
+   * Cookies del request: `{ cookies: { "my-cookie": "true" } }` envía `Cookie: my-cookie=true`.
+   * También acepta un `Cookies`: las `cookies` de una respuesta anterior o un contexto de cookies propio
+   * (`const cookies = new Cookies()`). Un `Cookies` pasado aquí se actualiza con los Set-Cookie de la respuesta,
+   * así el mismo objeto sirve para toda una secuencia de requests, como el almacén de cookies de un navegador.
+   * Dentro de un caso, Playwright ya reenvía al mismo servicio las cookies que este fijó; con `cookies`, el header
+   * Cookie lleva exactamente lo que se pasa y reemplaza esas cookies automáticas.
+   * Los caracteres que no van en una cookie (espacios, `;`, comas, comillas, no ASCII) se codifican.
+   * Se suman a un header `cookie` que ya venga en `headers`. En el reporte el header queda oculto como los demás valores sensibles.
+   */
+  cookies?: CookiesInit;
   /** Body JSON. */
   data?: unknown;
   /** Body de formulario. */
@@ -50,6 +61,11 @@ export interface TrackedResponse {
   readonly raw: APIResponse;
   /** Body de la respuesta, ya leído: el JSON parseado si es JSON, el texto si no, `undefined` si viene vacío. */
   readonly body: any;
+  /**
+   * Cookies después de este request: las que se enviaron más las que fijó la respuesta (Set-Cookie),
+   * sin las que la respuesta borró. Se reenvían con `{ cookies: res.cookies }`, también a otro servicio.
+   */
+  readonly cookies: Cookies;
   status(): number;
   headers(): Record<string, string>;
   json<T = any>(): Promise<T>;
@@ -95,7 +111,8 @@ export interface CaseContext {
 
 /** Función de un paso. Recibe el contexto del caso. Lo que devuelve es el valor de `await given(…)`. */
 export type StepFn<T = unknown> = (t: CaseContext) => T | Promise<T>;
-type Text = string | (() => string);
+/** Texto de title(), describe(), id() y los pasos: un string, una promesa de string o una función que devuelve cualquiera de los dos. */
+export type Text = string | Promise<string> | (() => string | Promise<string>);
 
 export interface CaseStep {
   paso: Paso;
@@ -107,6 +124,8 @@ export interface CaseDefinition {
   /** Id estable del caso: UC-01, UC-02… */
   id: string;
   title: string;
+  /** Descripción del caso, más larga que el título: contexto, reglas de negocio, por qué importa. */
+  description?: string;
   given: string;
   when: string;
   then: string;
@@ -121,8 +140,11 @@ export interface CaseDefinition {
 interface Draft {
   id?: string;
   title?: string;
+  description?: string;
   annotations: Annotations;
   steps: CaseStep[];
+  /** Textos de pasos que todavía se resuelven (promesas de string). */
+  pending: Promise<unknown>[];
   /** `vars` mientras se registran los pasos. */
   vars: Record<string, any>;
 }
@@ -150,8 +172,8 @@ const placeholder: any = new Proxy(function () {}, {
   set: () => true,
 });
 
-const text = (v: Text, fn: string): string => {
-  const s = typeof v === "function" ? v() : v;
+const text = async (v: Text, fn: string): Promise<string> => {
+  const s = await (typeof v === "function" ? v() : v);
   if (typeof s !== "string" || !s.trim()) throw new Error(`${fn}() necesita un texto no vacío.`);
   return s.trim();
 };
@@ -186,9 +208,10 @@ export async function takeDefinedCases(): Promise<CaseDefinition[]> {
 export function defineCase(body: () => unknown | Promise<unknown>): Promise<CaseDefinition> {
   if (collecting.getStore() || running.getStore()) throw new Error("defineCase() no se puede anidar.");
   if (typeof body !== "function") throw new Error("defineCase() necesita una función.");
-  const d: Draft = { annotations: {}, steps: [], vars: {} };
+  const d: Draft = { annotations: {}, steps: [], pending: [], vars: {} };
   const p = collecting.run(d, async () => {
     await body();
+    await Promise.all(d.pending); // pasos sin await y textos que eran promesas
     if (!d.title) throw new Error("Falta title() en defineCase().");
     for (const paso of ["given", "when", "then"] as const) {
       if (!d.steps.some((s) => s.paso === paso)) throw new Error(`"${d.title}": falta al menos un ${paso}().`);
@@ -197,6 +220,7 @@ export function defineCase(body: () => unknown | Promise<unknown>): Promise<Case
     const def: CaseDefinition = {
       id: d.id ?? "",
       title: d.title,
+      ...(d.description ? { description: d.description } : {}),
       given: join("given"),
       when: join("when"),
       then: join("then"),
@@ -228,36 +252,56 @@ function draftOrRun(fn: string): { d?: Draft; r?: Running } {
   return { d, r };
 }
 
-/** Título del caso, en palabras de la persona. Acepta un texto o una función que lo devuelve. */
+/** Título del caso, en palabras de la persona. Acepta un texto, una promesa de texto o una función que devuelve cualquiera de los dos. */
 export async function title(value: Text): Promise<void> {
   const { d } = draftOrRun("title");
   if (!d) return;
   if (d.title) throw new Error("title() se declara una sola vez por caso.");
-  d.title = text(value, "title");
+  d.title = await text(value, "title");
+}
+
+/**
+ * Descripción del caso, más larga que el título: el contexto, la regla de negocio o por qué importa.
+ * Opcional, una vez por caso. Acepta un texto, una promesa de texto o una función que devuelve cualquiera de los dos.
+ * Aparece en el reporte bajo el título.
+ */
+export async function describe(value: Text): Promise<void> {
+  const { d } = draftOrRun("describe");
+  if (!d) return;
+  if (d.description) throw new Error("describe() se declara una sola vez por caso.");
+  d.description = await text(value, "describe");
 }
 
 /** Id del caso (UC-NN). Opcional: por defecto sale del nombre del archivo. */
-export async function id(value: string): Promise<void> {
+export async function id(value: Text): Promise<void> {
   const { d } = draftOrRun("id");
-  if (d) d.id = text(value, "id");
+  if (d) d.id = await text(value, "id");
 }
 
 function runStep<T>(paso: Paso, description: Text, fn?: StepFn<T>): Promise<T> {
   if (fn !== undefined && typeof fn !== "function") throw new Error(`${paso}(): el segundo argumento debe ser una función.`);
-  const desc = text(description, paso);
+  // El texto puede ser una promesa: para los errores inmediatos se usa el texto si ya es un string
+  const quick = typeof description === "string" ? description.trim() : "…";
   const r0 = running.getStore();
   // Se revisa antes de devolver la promesa: un paso sin await deja el anterior en curso
-  if (r0?.step && !inStep.getStore()) throw new Error(`Falta await antes de ${r0.step}: ${paso}("${desc}") empezó con el paso anterior todavía corriendo.`);
+  if (r0?.step && !inStep.getStore()) throw new Error(`Falta await antes de ${r0.step}: ${paso}("${quick}") empezó con el paso anterior todavía corriendo.`);
   const { d, r } = draftOrRun(paso);
   if (d) {
-    d.steps.push({ paso, description: desc });
-    return Promise.resolve(placeholder as T);
+    // El lugar del paso se reserva ya, para conservar el orden aunque el texto sea una promesa
+    const step: CaseStep = { paso, description: quick };
+    d.steps.push(step);
+    const p = text(description, paso).then((desc) => ((step.description = desc), placeholder as T));
+    d.pending.push(p);
+    p.catch(() => {}); // defineCase lo informa
+    return p;
   }
-  const label = `${paso}("${desc}")`;
-  r!.step = label;
-  const t = r!.t;
+  r!.step = `${paso}("${quick}")`; // marca el paso en curso ya, antes de resolver el texto
   const p = (async () => {
     try {
+      const desc = await text(description, paso);
+      const label = `${paso}("${desc}")`;
+      r!.step = label;
+      const t = r!.t;
       await t.step(paso);
       return fn ? await inStep.run(label, () => active.run(t, () => fn(t))) : (undefined as T);
     } finally {
@@ -606,6 +650,125 @@ export const vars: Record<string, any> = new Proxy({} as Record<string, any>, {
   getOwnPropertyDescriptor: (_, k) => Reflect.getOwnPropertyDescriptor(varsStore(), k),
 });
 
+/* ---------- cookies ---------- */
+
+export type CookiesInit = Cookies | Record<string, string | number | boolean> | Iterable<readonly [string, string]>;
+
+const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+/** Codifica solo lo que no puede ir en el valor de una cookie; el resto queda tal cual (por ejemplo el `=` de un token base64). */
+const cookieValue = (v: string) => v.replace(/[^\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]/gu, (c) => encodeURIComponent(c));
+
+/**
+ * Cookies por nombre. Sirve de contexto de cookies para una secuencia de requests: cada request que lo recibe en la
+ * opción `cookies` lo envía y lo actualiza con los Set-Cookie de la respuesta.
+ *
+ *   const cookies = new Cookies();
+ *   await api.post("/login", { data, cookies });   // la respuesta fija "sesion"
+ *   await api.get("/perfil", { cookies });         // envía "sesion"
+ *   await api.post("/logout", { cookies });        // la respuesta la borra
+ */
+export class Cookies implements Iterable<[string, string]> {
+  #map = new Map<string, string>();
+
+  constructor(init?: CookiesInit) {
+    if (init) this.merge(init);
+  }
+
+  /** Suma cookies (otro Cookies, un objeto o pares nombre/valor). Las que ya existen se reemplazan. */
+  merge(init: CookiesInit): this {
+    const entries = init instanceof Cookies ? init.entries() : Symbol.iterator in Object(init) ? (init as Iterable<readonly [string, string]>) : Object.entries(init as Record<string, unknown>);
+    for (const [k, v] of entries) this.set(k, v as string);
+    return this;
+  }
+
+  get(name: string): string | undefined {
+    return this.#map.get(name);
+  }
+  has(name: string): boolean {
+    return this.#map.has(name);
+  }
+  set(name: string, value: string | number | boolean): this {
+    if (!COOKIE_NAME.test(name)) throw new Error(`cookies: "${name}" no es un nombre de cookie válido.`);
+    this.#map.set(name, cookieValue(String(value)));
+    return this;
+  }
+  delete(name: string): boolean {
+    return this.#map.delete(name);
+  }
+  get size(): number {
+    return this.#map.size;
+  }
+  entries(): IterableIterator<[string, string]> {
+    return this.#map.entries();
+  }
+  [Symbol.iterator](): IterableIterator<[string, string]> {
+    return this.#map.entries();
+  }
+  /** Valor del header Cookie: `a=1; b=2`. */
+  toString(): string {
+    return [...this.#map].map(([k, v]) => `${k}=${v}`).join("; ");
+  }
+  toJSON(): Record<string, string> {
+    return Object.fromEntries(this.#map);
+  }
+
+  /** Aplica los headers Set-Cookie de una respuesta: fija las nuevas y borra las vencidas (Max-Age=0 o Expires pasado). */
+  applySetCookie(lines: string[]): this {
+    for (const line of lines) {
+      const [pair, ...attrs] = line.split(";");
+      const eq = pair.indexOf("=");
+      if (eq <= 0) continue;
+      const name = pair.slice(0, eq).trim();
+      if (!COOKIE_NAME.test(name)) continue;
+      let value = pair.slice(eq + 1).trim();
+      if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) value = value.slice(1, -1);
+      const attr = (n: string) => attrs.map((a) => a.trim()).find((a) => a.toLowerCase().startsWith(n + "="))?.slice(n.length + 1);
+      const maxAge = attr("max-age");
+      const expires = attr("expires");
+      const gone = (maxAge != null && Number(maxAge) <= 0) || (maxAge == null && expires != null && Date.parse(expires) <= Date.now());
+      if (gone) this.#map.delete(name);
+      else this.#map.set(name, value);
+    }
+    return this;
+  }
+}
+
+/** Une las cookies del request con un header `cookie` que ya venga en headers (sin importar mayúsculas). */
+export function withCookies(headers: Record<string, string> = {}, cookies?: CookiesInit): Record<string, string> {
+  const jar = cookies ? new Cookies(cookies) : undefined;
+  if (!jar?.size) return headers;
+  const out: Record<string, string> = {};
+  const prev: string[] = [];
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === "cookie") prev.push(v);
+    else out[k] = v;
+  }
+  out.cookie = [...prev, jar.toString()].join("; ");
+  return out;
+}
+
+/** Cookies que lleva un header Cookie (`a=1; b=2`). */
+function parseCookieHeader(value: string | undefined): Array<[string, string]> {
+  if (!value) return [];
+  return value
+    .split(";")
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .flatMap((p): Array<[string, string]> => {
+      const eq = p.indexOf("=");
+      const name = eq > 0 ? p.slice(0, eq).trim() : "";
+      return COOKIE_NAME.test(name) ? [[name, p.slice(eq + 1).trim()]] : [];
+    });
+}
+
+/** Headers Set-Cookie de una respuesta de Playwright (cada uno por separado). */
+function setCookieLines(raw: APIResponse): string[] {
+  const arr = typeof (raw as any).headersArray === "function" ? (raw as any).headersArray() : undefined;
+  if (Array.isArray(arr)) return arr.filter((h: any) => String(h.name).toLowerCase() === "set-cookie").map((h: any) => String(h.value));
+  const joined = raw.headers()["set-cookie"];
+  return joined ? joined.split("\n") : [];
+}
+
 /* ---------- implementación usada por run.ts ---------- */
 
 export interface RecordedCheck {
@@ -694,10 +857,11 @@ export function createContext(opts: {
       lastRequestTag = tag;
       lastCaseRequestTag = tag;
       requestTags.push(tag);
+      const reqHeaders = withCookies(o.headers, o.cookies);
       const raw = await ctx.fetch(path.replace(/^\//, ""), {
         method,
         headers: {
-          ...(o.headers ?? {}),
+          ...reqHeaders,
           ...runHeader,
           "x-testcase-uc": def.id,
           "x-testcase-step": stepTag,
@@ -720,10 +884,20 @@ export function createContext(opts: {
           /* no era JSON válido: queda el texto */
         }
       }
+      // Las enviadas a mano, con los Set-Cookie aplicados, más las que Playwright guarda para este servicio
+      const setCookies = setCookieLines(raw);
+      // Un Cookies pasado en la opción es un contexto de cookies: se actualiza con lo que fijó o borró la respuesta
+      if (o.cookies instanceof Cookies) o.cookies.applySetCookie(setCookies);
+      const cookies = new Cookies(parseCookieHeader(reqHeaders.cookie)).applySetCookie(setCookies);
+      if (typeof (ctx as any).storageState === "function") {
+        const state = await ctx.storageState().catch(() => undefined);
+        for (const c of state?.cookies ?? []) cookies.merge([[c.name, c.value]]);
+      }
       return {
         tag,
         raw,
         body,
+        cookies,
         status: () => raw.status(),
         headers: () => raw.headers(),
         json: () => raw.json(),

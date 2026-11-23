@@ -446,6 +446,8 @@ for (const { def, file } of defs) {
     invocations: uc.invocations ?? [],
     status: uc.status ?? "pending",
   });
+  if (def.description) uc.description = def.description;
+  else delete uc.description;
   delete uc.failure;
   delete uc.pending;
 }

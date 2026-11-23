@@ -13,6 +13,7 @@ import {
   declaredServices,
   defineCase,
   defineService,
+  describe as describeCase,
   isHttpService,
   serviceKind,
   encodeHeaderJson,
@@ -30,6 +31,8 @@ import {
   title,
   vars,
   when,
+  withCookies,
+  Cookies,
   CaseAbort,
   type CaseDefinition,
   type RecordedCheck,
@@ -75,6 +78,7 @@ describe("defineCase", () => {
     const def = await defineCase(async () => {
       await id("UC-10");
       await title(() => "Título " + "calculado");
+      await describeCase("  Contexto del caso: por qué importa.  ");
       const pedido = await given("un pedido", async () => ((ran = true), { id: "ord_1" }));
       // Al registrar, el valor de un paso acepta propiedades y llamadas sin fallar
       const ruta = `/v1/orders/${pedido.id}`;
@@ -85,6 +89,7 @@ describe("defineCase", () => {
     assert.equal(ran, false, "los pasos no corren al registrar");
     assert.equal(def.id, "UC-10");
     assert.equal(def.title, "Título calculado");
+    assert.equal(def.description, "Contexto del caso: por qué importa.");
     assert.equal(def.given, "un pedido");
     assert.equal(def.then, "responde 403 y el pedido sigue pending");
     assert.deepEqual(
@@ -98,6 +103,26 @@ describe("defineCase", () => {
     );
     assert.deepEqual(await takeDefinedCases(), [def]);
     assert.deepEqual(await takeDefinedCases(), [], "takeDefinedCases vacía la lista");
+  });
+
+  it("title, describe, id y los pasos aceptan string, Promise<string> o una función que devuelve cualquiera", async () => {
+    await takeDefinedCases();
+    const later = (v: string) => new Promise<string>((ok) => setTimeout(() => ok(v), 5));
+    const def = await defineCase(async () => {
+      await id(later("UC-42"));
+      await title(async () => "Título " + (await later("async")));
+      await describeCase(later("Descripción en una promesa"));
+      await given(later("un pedido"));
+      await when(() => later("se cancela"), async () => "ok");
+      await then("responde 403");
+    });
+    await takeDefinedCases();
+    assert.equal(def.id, "UC-42");
+    assert.equal(def.title, "Título async");
+    assert.equal(def.description, "Descripción en una promesa");
+    assert.deepEqual(def.steps.map((s) => s.description), ["un pedido", "se cancela", "responde 403"]);
+    await assert.rejects(defineCase(async () => (await title(later("  ")), await given("a"))), /title\(\) necesita un texto no vacío/);
+    await takeDefinedCases().catch(() => {});
   });
 
   it("takeDefinedCases espera a los defineCase sin await y deja el id vacío si no se declara", async () => {
@@ -119,6 +144,8 @@ describe("defineCase", () => {
     ["sin then", async () => (await title("x"), await given("a"), await when("b")), /falta al menos un then\(\)/],
     ["title dos veces", async () => (await title("x"), await title("y")), /una sola vez/],
     ["title vacío", () => title("  "), /texto no vacío/],
+    ["describe dos veces", async () => (await title("x"), await describeCase("a"), await describeCase("b")), /describe\(\) se declara una sola vez/],
+    ["describe vacío", () => describeCase(""), /texto no vacío/],
     ["defineCase anidado", () => defineCase(async () => {}), /no se puede anidar/],
     ["paso con segundo argumento inválido", async () => (await title("x"), await given("a", "no" as any)), /debe ser una función/],
     ["request fuera de un paso", async () => (await title("x"), page()), /solo funciona dentro de un paso/],
@@ -345,6 +372,80 @@ describe("contexto de un caso", () => {
     assert.equal(by["positivo"].expected, "(n) => n > 0", "sin descripción, el esperado es el código del validador");
     assert.equal(by["par"].expected, "número par");
     assert.match(String(by["lanza"].expected), /^\(v\) => v\.id === 1 \(lanzó: .*null/);
+  });
+
+  it("cookies arma el header Cookie y se suma a uno que ya venga en headers", async () => {
+    const api = await defineService({ name: "api", endpoint: "https://api.example.com" });
+    const def = await defineCase(async () => {
+      await id("UC-05");
+      await title("x");
+      await given("a", () => api.get("/a", { cookies: { "my-cookie": "true", sesion: "a b;c" } }));
+      await when("b", () => api.get("/b", { headers: { Cookie: "previa=1" }, cookies: { n: 2 } }));
+      await then("c", () => api.get("/c"));
+    });
+    await takeDefinedCases();
+    const r = runCase(def);
+    await def.run(r.ctx.t);
+    const h = r.calls.map((c) => c.opts.headers);
+    assert.equal(h[0].cookie, "my-cookie=true; sesion=a%20b%3Bc");
+    assert.equal(h[1].cookie, "previa=1; n=2");
+    assert.equal(h[1].Cookie, undefined, "queda un solo header cookie");
+    assert.equal(h[2].cookie, undefined, "sin cookies no se agrega el header");
+    assert.throws(() => withCookies({}, { "mal nombre": "x" }), /no es un nombre de cookie válido/);
+  });
+
+  it("la respuesta trae cookies (Cookies) que se reenvían con la opción cookies", async () => {
+    const api = await defineService({ name: "api", endpoint: "https://api.example.com" });
+    let perfilCookies: Cookies | undefined;
+    const def = await defineCase(async () => {
+      await id("UC-06");
+      await title("x");
+      const login = await given("inicia sesión", () => api.post("/login", { cookies: { tema: "oscuro", aviso: "1" } }));
+      const perfil = await when("ve su perfil", () => api.get("/perfil", { cookies: login.cookies }));
+      await then("cierra sesión", async () => {
+        perfilCookies = new Cookies(perfil.cookies); // copia: perfil.cookies se actualiza al pasarlo al logout
+        const salir = await api.post("/logout", { cookies: perfil.cookies });
+        assert.deepEqual(salir.cookies.toJSON(), { tema: "oscuro", carrito: "c1" }, "logout borra la sesión");
+        assert.equal(perfil.cookies.has("sesion"), false, "el Cookies pasado al logout también se actualizó");
+      });
+    });
+    await takeDefinedCases();
+    const r = runCase(def, (path) => {
+      const h: Record<string, string> = { "content-type": "application/json" };
+      if (path === "login") h["set-cookie"] = ["sesion=abc==; Path=/; HttpOnly", "aviso=; Max-Age=0"].join("\n");
+      if (path === "perfil") h["set-cookie"] = "carrito=c1; Expires=Wed, 01 Jan 2099 00:00:00 GMT";
+      if (path === "logout") h["set-cookie"] = "sesion=; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      return { headers: h, body: "{}" };
+    });
+    await def.run(r.ctx.t);
+    const sent = r.calls.map((c) => c.opts.headers.cookie);
+    assert.deepEqual(sent, ["tema=oscuro; aviso=1", "tema=oscuro; sesion=abc==", "tema=oscuro; sesion=abc==; carrito=c1"]);
+    assert.ok(perfilCookies instanceof Cookies);
+    assert.equal(perfilCookies!.get("sesion"), "abc==", "el = del valor no se codifica");
+    assert.equal(perfilCookies!.has("aviso"), false, "Max-Age=0 la borra");
+    assert.equal(String(perfilCookies), "tema=oscuro; sesion=abc==; carrito=c1");
+  });
+
+  it("un Cookies pasado en la opción funciona como contexto de cookies entre requests", async () => {
+    const api = await defineService({ name: "api", endpoint: "https://api.example.com" });
+    const cookies = new Cookies({ tema: "oscuro" });
+    const def = await defineCase(async () => {
+      await id("UC-07");
+      await title("x");
+      await given("inicia sesión", () => api.post("/login", { cookies }));
+      await when("ve su perfil", () => api.get("/perfil", { cookies }));
+      await then("cierra sesión", () => api.post("/logout", { cookies }));
+    });
+    await takeDefinedCases();
+    const r = runCase(def, (path) => {
+      const h: Record<string, string> = { "content-type": "application/json" };
+      if (path === "login") h["set-cookie"] = "sesion=abc==; Path=/";
+      if (path === "logout") h["set-cookie"] = "sesion=; Max-Age=0";
+      return { headers: h, body: "{}" };
+    });
+    await def.run(r.ctx.t);
+    assert.deepEqual(r.calls.map((c) => c.opts.headers.cookie), ["tema=oscuro", "tema=oscuro; sesion=abc==", "tema=oscuro; sesion=abc=="]);
+    assert.deepEqual(cookies.toJSON(), { tema: "oscuro" }, "el logout borró la sesión del mismo objeto");
   });
 
   it("body: JSON parseado, texto si no es JSON, undefined si viene vacío", async () => {

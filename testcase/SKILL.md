@@ -53,7 +53,7 @@ Los casos se escriben en `.testcase/cases/` del proyecto. No instales nada en el
 Los casos van en `.testcase/cases/*.case.ts`: un archivo por caso (`UC-NN.case.ts`) o varios casos relacionados en un archivo. **Cada script es autocontenido**: importa desde `testcase.ts` todo lo que usa y declara con `defineService` los servicios que necesita. Así, el script basta para saber qué se prueba, contra qué y cómo.
 
 ```ts
-import { defineCase, defineService, fromEnv, sensitive, title, given, when, then, notation, check, ensure, between, page } from "../testcase.ts";
+import { defineCase, defineService, fromEnv, sensitive, title, describe, given, when, then, notation, check, ensure, between, page } from "../testcase.ts";
 
 // Servicio URL que ya existe: sus requests pasan por el proxy de evidencia.
 const api = await defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
@@ -72,9 +72,10 @@ const db = await defineService({
 // Proceso local: un comando de shell en su carpeta, sin contenedor. Con port, habla HTTP y tiene proxy local.
 const web = await defineService({ name: "web", command: "bun run dev", cwd: "./apps/web", port: 3000, dependsOn: [db], health: "GET /healthz" });
 
-// Todo se usa con await: defineService, defineCase, title, id, given, when y then.
+// Todo se usa con await: defineService, defineCase, title, describe, id, given, when y then.
 await defineCase(async () => {
   await title(() => "Cliente no puede cancelar un pedido ajeno");
+  await describe("Un cliente solo puede cancelar sus propios pedidos. La API rechaza la cancelación y el pedido no cambia.");
   notation("tenant", "tienda-norte");                 // anotación de todo el caso
 
   // Cada paso devuelve lo que devuelve su función: los datos pasan de un paso a otro sin vars.
@@ -112,15 +113,16 @@ La API completa:
 | | |
 |---|---|
 | `await defineCase(async () => { … })` | Declara el caso. Al cargar el archivo, recorre su función **sin ejecutar los pasos** para registrar el título y los pasos (cada `await given(…)` devuelve un valor vacío que acepta cualquier propiedad). Al correr el caso la ejecuta de nuevo, ahora con los pasos de verdad. Un archivo puede tener varios `defineCase` (por ejemplo `pedidos.case.ts` con UC-04 y UC-05 que comparten servicios). |
-| `await title(texto)` · `await title(() => texto)` | Título del caso. Una vez por caso. |
-| `await id("UC-NN")` | Si el archivo tiene un solo caso, es opcional: el id sale del nombre (`UC-03.case.ts` → `UC-03`). Si tiene varios, cada caso declara el suyo. |
+| `await title(texto)` · `await title(() => texto)` | Título del caso. Una vez por caso. Como en `describe`, `id` y los pasos, el texto puede ser un `string`, una `Promise<string>` o una función que devuelve cualquiera de los dos: `await title(leerTitulo())`. |
+| `await describe(texto)` | Descripción del caso, más larga que el título: el contexto, la regla de negocio o por qué importa. Opcional, una vez por caso. Aparece en el reporte bajo el título. |
+| `await id("UC-NN")` | Si el archivo tiene un solo caso, es opcional: sin `id()`, el id sale del comienzo del nombre del archivo en mayúsculas (`UC-03.case.ts`, `uc-03-paginacion.case.ts` → `UC-03`). Si el nombre no empieza con `UC-` y un número, no hay valor por defecto y `run.ts` se detiene pidiendo renombrar el archivo o declarar `id()`. Si el archivo tiene varios casos, cada uno declara el suyo; si falta en alguno, `run.ts` se detiene y lo nombra. Nunca se genera un id al azar. |
 | `await given(texto, fn?)` · `await when(…)` · `await then(…)` | Pasos. Corren en el orden en que se escriben y devuelven lo que devuelve `fn`: `const login = await given("…", async () => api.post(…))`. `fn` es opcional: `await given("un pedido de María")` deja el paso solo como texto. Sin `await`, o con un paso dentro de otro, el caso falla con un mensaje claro. Los requests, `check`, `ensure` y `page()` van dentro de un paso. |
 | `await defineService({ name, endpoint, … })` | Servicio URL que ya existe (`connected`). Campos: `endpoint`, `version?`, `health?`. |
 | `await defineService({ name, command, … })` | Proceso local (`process`): un comando de shell que corre en esta máquina, sin contenedor. Campos: `command`, `cwd?` (relativa a la raíz del proyecto), `port?` (donde escucha; con puerto habla HTTP y va por un proxy local), `env?`, `dependsOn?`, `artifacts?`, `health?` (`GET /ruta` lo corre `local.ts`), `http?`. Con `image` o `build`, `command` es el comando del contenedor, no un proceso local. |
 | `await defineService({ name, image \| build, … })` | Contenedor (`provisioned`). Campos: `image` o `build` (texto con el contexto, o `{ context, dockerfile?, args?, target? }`; rutas relativas a la raíz del proyecto), `command?`, `tmpfs?` (rutas en memoria), `ports?` (`{ container, host? }`; sin `host` se asigna uno desde 55000), `env?`, `dependsOn?` (nombres o servicios), `storage?`, `artifacts?` (`{ kind, source, description? }`), `health?`, `http?` (si habla HTTP, va por proxy). |
 | `fromEnv("VAR")` | Valor de `env` que sale del entorno del host. En la lista de servicios del reporte queda como `••••` con el nombre de la variable, y si la variable existe al correr, su valor se trata como `sensitive`. |
 | `sensitive(valor)` | Declara un valor o texto sensible y lo devuelve tal cual: `const password = sensitive(process.env.PEDRO_PASSWORD)`. El caso usa el valor real y `report.json` lo conserva (en `secrets`); el HTML lo oculta como `••••` donde aparezca (URL, headers, bodies, anotaciones, aserciones) hasta que se pulsa "Mostrar valores sensibles". Va en el módulo, en `defineCase` o en un paso, por ejemplo `sensitive(login.body.access_token)`. Valores de menos de 4 caracteres no se registran. |
-| `servicio.get/post/put/patch/delete/fetch(ruta, opts)` | Request HTTP (Playwright) por el proxy del servicio, con `data`, `form`, `params`, `headers`. Devuelve `body` (el JSON ya parseado, o el texto), `status()` y `headers()`. |
+| `servicio.get/post/put/patch/delete/fetch(ruta, opts)` | Request HTTP (Playwright) por el proxy del servicio, con `data`, `form`, `params`, `headers` y `cookies` (`{ cookies: { "my-cookie": "true" } }` envía `Cookie: my-cookie=true`; en el reporte queda oculto como los demás valores sensibles). La respuesta trae `cookies` (instancia de `Cookies`: las enviadas más las de `Set-Cookie`, sin las borradas); se reenvían con `{ cookies: login.cookies }`, también a otro servicio. Un `Cookies` pasado en la opción es un contexto de cookies: se envía y se actualiza con los `Set-Cookie` de la respuesta, así `const cookies = new Cookies()` pasado a cada request lleva la sesión por toda la secuencia (un objeto simple solo se envía). Dentro de un caso, Playwright ya reenvía al mismo servicio las cookies que este fijó; pasar `cookies` reemplaza esas cookies automáticas por exactamente las que se pasan (útil para cambiar de usuario). Devuelve `body` (el JSON ya parseado, o el texto), `cookies`, `status()` y `headers()`. |
 | `servicio.url(ruta)` | URL del servicio por el proxy, para `page().goto()`. |
 | `notation(nombre, valor, { response? })` | Define una anotación y devuelve el valor: `const timeAlive = notation("time alive", res.body.timeAlive)`. En el cuerpo de `defineCase`, fuera de los pasos, es de todo el caso. En un paso, antes de un request, la llevan los requests que siguen en ese paso. Después de un request, se une a ese request. |
 | `check(expresión, actual, esperado, { response?, expectedFailure? })` | Registra una aserción y sigue. Sin `response`, se une al último request del paso, o al último del caso si el paso no hizo ninguno (por ejemplo, un `then` que revisa la respuesta del `when`). El esperado es un valor (igualdad profunda) o un **validador**: una función que recibe el valor real y devuelve `true` o `false`, por ejemplo `check("total positivo", body.total, (n) => n > 0)`. Si lanza un error, la aserción falla. Hay validadores listos: `instanceOf(Date)`, `between(0, 500)` y `satisfies("descripción", fn)`. En el reporte, el esperado queda como la descripción del validador o, si no tiene, su código. |
