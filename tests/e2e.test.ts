@@ -323,7 +323,7 @@ describe("report.html en el navegador", { skip: chromiumError ?? false, timeout:
     }
   });
 
-  it("Copiar en Estado copia la respuesta como mensaje HTTP: línea de estado, headers y body", async () => {
+  it("Copiar en Estado copia la respuesta como mensaje HTTP, y Reproducir copia el request como fetch()", async () => {
     const { chromium } = await import("playwright");
     const { tempDir, ASSETS } = await import("./helpers.ts");
     const { dir, cleanup } = tempDir();
@@ -362,6 +362,26 @@ describe("report.html en el navegador", { skip: chromiumError ?? false, timeout:
 
       const grpc = example.requests.find((x: any) => x.protocol === "grpc");
       assert.equal(await copy(grpc.id), null, "un request gRPC no tiene la copia HTTP");
+
+      // Reproducir → fetch: el código copiado corre y llama a fetch con la URL, el método, los headers y el body del request
+      const copyFetch = async (id: number) => {
+        await page.locator(`.tl-row[data-id="${id}"]`).click();
+        await page.locator('#detail [data-tab="rep"]').click();
+        const btn = page.locator('#detail [data-copy="fetch"]');
+        if (!(await btn.count())) return null;
+        await btn.click();
+        return page.evaluate(() => (window as any).__copied as string);
+      };
+      const post = example.requests.find((x: any) => x.protocol === "http" && x.request.body.encoding === "json");
+      const code = (await copyFetch(post.id))!;
+      let call: any;
+      await new Function("fetch", `return (async () => { ${code}; return res; })()`)(async (url: string, init: any) => ((call = { url, init }), "ok"));
+      assert.equal(call.url, post.url);
+      assert.equal(call.init.method, post.method);
+      const sent = post.request.headers.filter((h: any) => !/^(host|content-length|connection|accept-encoding|transfer-encoding|keep-alive|upgrade|x-testcase-.*|:.*)$/i.test(h.name));
+      assert.deepEqual(Object.entries(call.init.headers), sent.map((h: any) => [h.name, h.value]));
+      assert.deepEqual(JSON.parse(call.init.body), post.request.body.value);
+      assert.equal(await copyFetch(grpc.id), null, "un request gRPC no tiene la copia fetch");
     } finally {
       await browser.close();
       cleanup();

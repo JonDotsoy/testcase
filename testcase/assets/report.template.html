@@ -209,6 +209,9 @@ table.hdr td:last-child{overflow-wrap:anywhere;word-break:break-word}
 pre.code{margin:0;background:var(--code-bg);border:1px solid var(--line-2);border-radius:6px;padding:10px 12px;font-family:var(--f-mono);font-size:12px;line-height:1.55;overflow:auto;max-height:360px;white-space:pre}
 pre.code .k{color:var(--k)} pre.code .s{color:var(--s)} pre.code .n{color:var(--n)} pre.code .b{color:var(--b)} pre.code .c{color:var(--faint)}
 .note{font-size:12px;color:var(--muted)}
+.copy-icon{display:inline-flex;align-items:center;gap:4px;padding:2px 6px}
+.copy-icon svg{width:13px;height:13px}
+.copy-btns{display:inline-flex;gap:6px}
 .copy{border:1px solid var(--line);background:var(--surface);border-radius:5px;font-size:11.5px;padding:2px 8px;cursor:pointer;text-transform:none;letter-spacing:0;color:var(--ink);font-weight:500}
 .empty{padding:40px 20px;text-align:center;color:var(--muted)}
 .howto{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;padding:16px 18px}
@@ -607,6 +610,18 @@ function hdrTable(rows){
   return `<table class="hdr"><tbody>${rows.map(([k,v,m,ref])=>`<tr><td>${esc(k)}</td><td>${v==null?'<span class="note">—</span>':esc(m&&state.reveal&&SECRETS[ref]!=null?SECRETS[ref]:v)}${m?(state.reveal&&SECRETS[ref]!=null?'<span class="mask shown">sensible</span>':'<span class="mask">oculto</span>'):""}</td></tr>`).join("")}</tbody></table>`;
 }
 const view = (r,x)=>!state.reveal?x:x===r.reqB?r.reqBReal:x===r.resB?r.resBReal:x;
+/** Headers que fetch() pone solo o no deja fijar, y las etiquetas internas de la evidencia. */
+const FETCH_SKIP = /^(host|content-length|connection|accept-encoding|transfer-encoding|keep-alive|upgrade|x-testcase-.*|:.*)$/i;
+/** El request como llamada fetch() de JavaScript. Respeta "Mostrar valores sensibles". */
+function fetchCode(r){
+  const url = state.reveal ? r.raw.url : r.url;
+  const hdr = r.reqH.filter(([k])=>!FETCH_SKIP.test(k)).map(([k,v,m,ref])=>[k, m&&state.reveal&&SECRETS[ref]!=null?SECRETS[ref]:v??""]);
+  const b = view(r,r.reqB);
+  const opts = [`  method: ${JSON.stringify(r.proto==="graphql"?"POST":r.verb)},`];
+  if(hdr.length) opts.push(`  headers: {\n${hdr.map(([k,v])=>`    ${JSON.stringify(k)}: ${JSON.stringify(v)},`).join("\n")}\n  },`);
+  if(b!=null) opts.push(`  body: ${typeof b==="string" ? JSON.stringify(b) : "JSON.stringify("+JSON.stringify(b,null,2).replace(/\n/g,"\n  ")+")"},`);
+  return `const res = await fetch(${JSON.stringify(url)}, {\n${opts.join("\n")}\n});`;
+}
 /** Respuesta completa como mensaje HTTP: línea de estado, headers, línea en blanco y body. Respeta "Mostrar valores sensibles". */
 function httpResponse(r){
   const hdr = r.resH.map(([k,v,m,ref])=>`${k}: ${m&&state.reveal&&SECRETS[ref]!=null?SECRETS[ref]:v??""}`);
@@ -644,7 +659,7 @@ function renderDetail(){
       ${r.trailers?`<h4>Trailers</h4>${hdrTable(r.trailers)}`:""}
       <h4>${P.rbody} ${r.resB!=null?'<button class="copy" data-copy="resB">Copiar</button>':""}</h4><pre class="code">${hl(view(r,r.resB))}</pre></div>`;
   const repPane = `<div class="d-sec" ${state.tab!=="rep"?"hidden":""}>
-      <h4>Comando equivalente <button class="copy" data-copy="rep">Copiar</button></h4><pre class="code">${esc(reproduce(r))}</pre>
+      <h4>Comando equivalente <span class="copy-btns">${r.http?`<button class="copy copy-icon" data-copy="fetch" title="Copiar como fetch()" aria-label="Copiar como fetch()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>fetch</button>`:""}<button class="copy" data-copy="rep">Copiar</button></span></h4><pre class="code">${esc(reproduce(r))}</pre>
       <p class="note" style="margin:0">${state.reveal?"El comando incluye los valores sensibles reales de esta corrida.":"Con los valores sensibles ocultos, los secretos se reemplazan por variables de entorno ($TOKEN, $SERVICE_TOKEN, $PGPASSWORD)."}</p></div>`;
   $("#detail").innerHTML = `
     <div class="d-head" style="--pc:${P.color}">
@@ -681,13 +696,14 @@ $("#detail").addEventListener("click",e=>{
   const t = e.target.closest("[data-tab]"); if(t){ state.tab=t.dataset.tab; renderDetail(); return; }
   const c = e.target.closest("[data-copy]"); if(!c) return;
   const r = REQ.find(x=>x.id===state.sel);
-  const raw = view(r,r[c.dataset.copy]); const v = c.dataset.copy==="rep" ? reproduce(r) : c.dataset.copy==="resHttp" ? httpResponse(r) : (typeof raw==="string"?raw:JSON.stringify(raw,null,2));
-  const done = ()=>{c.textContent="Copiado";setTimeout(()=>c.textContent="Copiar",1400);};
+  const raw = view(r,r[c.dataset.copy]); const v = c.dataset.copy==="rep" ? reproduce(r) : c.dataset.copy==="resHttp" ? httpResponse(r) : c.dataset.copy==="fetch" ? fetchCode(r) : (typeof raw==="string"?raw:JSON.stringify(raw,null,2));
+  const orig = c.innerHTML, label = t=>{ if(c.dataset.copy==="fetch"){ c.lastChild.textContent = t==="Copiar"?"fetch":t; } else c.textContent=t; };
+  const done = ()=>{label("Copiado");setTimeout(()=>{c.innerHTML=orig;},1400);};
   const fallback = ()=>{
-    if(c.dataset.copy==="resHttp"){ // el mensaje no está en pantalla tal cual: se copia desde un textarea temporal
+    if(c.dataset.copy==="resHttp"||c.dataset.copy==="fetch"){ // el mensaje no está en pantalla tal cual: se copia desde un textarea temporal
       const ta=document.createElement("textarea"); ta.value=v; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.select();
       let ok=false; try{ ok=document.execCommand("copy"); }catch(_){}
-      ta.remove(); c.textContent=ok?"Copiado":"No se pudo copiar"; setTimeout(()=>c.textContent="Copiar",1400); return;
+      ta.remove(); label(ok?"Copiado":"No se pudo copiar"); setTimeout(()=>{c.innerHTML=orig;},1400); return;
     }
     const pre=c.closest("h4").nextElementSibling;const s=getSelection();const rg=document.createRange();rg.selectNodeContents(pre);s.removeAllRanges();s.addRange(rg);c.textContent="Seleccionado";};
   try{ navigator.clipboard.writeText(v).then(done,fallback); }catch(_){ fallback(); }
