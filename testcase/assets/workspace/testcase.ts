@@ -34,6 +34,12 @@ export type Annotations = Record<string, string | number | boolean>;
 
 export interface RequestOptions {
   headers?: Record<string, string>;
+  /**
+   * Cookies del request: `{ cookies: { "my-cookie": "true" } }` envía `Cookie: my-cookie=true`.
+   * Los valores se codifican con encodeURIComponent. Se suman a un header `cookie` que ya venga en `headers`.
+   * En el reporte el header Cookie queda enmascarado como los demás headers sensibles.
+   */
+  cookies?: Record<string, string | number | boolean>;
   /** Body JSON. */
   data?: unknown;
   /** Body de formulario. */
@@ -660,6 +666,23 @@ export interface ServiceTarget {
 
 export class CaseAbort extends Error {}
 
+/** Une las cookies del request con un header `cookie` que ya venga en headers (sin importar mayúsculas). */
+export function withCookies(headers: Record<string, string> = {}, cookies?: Record<string, string | number | boolean>): Record<string, string> {
+  if (!cookies || !Object.keys(cookies).length) return headers;
+  for (const name of Object.keys(cookies)) {
+    if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name)) throw new Error(`cookies: "${name}" no es un nombre de cookie válido.`);
+  }
+  const pairs = Object.entries(cookies).map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`);
+  const out: Record<string, string> = {};
+  const prev: string[] = [];
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === "cookie") prev.push(v);
+    else out[k] = v;
+  }
+  out.cookie = [...prev, ...pairs].join("; ");
+  return out;
+}
+
 /** Codifica un JSON para un header HTTP (los headers no admiten tildes ni ñ). */
 export function encodeHeaderJson(value: unknown): string {
   return "b64:" + Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
@@ -725,7 +748,7 @@ export function createContext(opts: {
       const raw = await ctx.fetch(path.replace(/^\//, ""), {
         method,
         headers: {
-          ...(o.headers ?? {}),
+          ...withCookies(o.headers, o.cookies),
           ...runHeader,
           "x-testcase-uc": def.id,
           "x-testcase-step": stepTag,

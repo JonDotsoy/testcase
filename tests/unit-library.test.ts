@@ -31,6 +31,7 @@ import {
   title,
   vars,
   when,
+  withCookies,
   CaseAbort,
   type CaseDefinition,
   type RecordedCheck,
@@ -370,6 +371,26 @@ describe("contexto de un caso", () => {
     assert.equal(by["positivo"].expected, "(n) => n > 0", "sin descripción, el esperado es el código del validador");
     assert.equal(by["par"].expected, "número par");
     assert.match(String(by["lanza"].expected), /^\(v\) => v\.id === 1 \(lanzó: .*null/);
+  });
+
+  it("cookies arma el header Cookie y se suma a uno que ya venga en headers", async () => {
+    const api = await defineService({ name: "api", endpoint: "https://api.example.com" });
+    const def = await defineCase(async () => {
+      await id("UC-05");
+      await title("x");
+      await given("a", () => api.get("/a", { cookies: { "my-cookie": "true", sesion: "a b;c" } }));
+      await when("b", () => api.get("/b", { headers: { Cookie: "previa=1" }, cookies: { n: 2 } }));
+      await then("c", () => api.get("/c"));
+    });
+    await takeDefinedCases();
+    const r = runCase(def);
+    await def.run(r.ctx.t);
+    const h = r.calls.map((c) => c.opts.headers);
+    assert.equal(h[0].cookie, "my-cookie=true; sesion=a%20b%3Bc");
+    assert.equal(h[1].cookie, "previa=1; n=2");
+    assert.equal(h[1].Cookie, undefined, "queda un solo header cookie");
+    assert.equal(h[2].cookie, undefined, "sin cookies no se agrega el header");
+    assert.throws(() => withCookies({}, { "mal nombre": "x" }), /no es un nombre de cookie válido/);
   });
 
   it("body: JSON parseado, texto si no es JSON, undefined si viene vacío", async () => {
