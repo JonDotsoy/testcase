@@ -1,6 +1,6 @@
 // Ejemplo: copia este archivo a cases/ y ajústalo. Un archivo por caso de uso; el id sale del nombre (UC-01).
 // El script es autocontenido: importa lo que usa y declara sus servicios.
-import { defineCase, defineService, fromEnv, sensitive, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";
+import { defineCase, defineService, fromEnv, sensitive, title, given, when, then, notation, check, ensure, page } from "../testcase.ts";
 
 // Servicio URL que ya existe: sus requests pasan por el proxy de evidencia.
 const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
@@ -30,33 +30,34 @@ const pedidos = defineService({
   health: "GET /healthz",
 });
 
-export default defineCase(() => {
-  title(() => "Cliente no puede cancelar un pedido ajeno");
+await defineCase(async () => {
+  await title(() => "Cliente no puede cancelar un pedido ajeno");
   notation("tenant", "tienda-norte"); // anotación de todo el caso
   notation("db", db.name);
   notation("backend", pedidos.name);
 
-  given("un pedido creado por María", async () => {
+  // Cada paso se espera con await y devuelve lo que devuelve su función.
+  const token = await given("un pedido creado por María", async () => {
     notation("usuario", "pedro@acme.test"); // antes del request: la lleva el request que sigue
     notation("perfil", "cliente");
-    const password = sensitive(process.env.PEDRO_PASSWORD ?? ""); // en el reporte queda como ••••
+    const password = sensitive(process.env.PEDRO_PASSWORD ?? ""); // en el HTML queda oculto
     const login = await api.post("/v1/auth/token", { data: { email: "pedro@acme.test", password } });
     ensure("status == 200", login.status(), 200);
-    vars.token = sensitive(login.body.access_token);
     notation("rol", login.body.user.role); // después del request: se une a ese request
+    return sensitive(login.body.access_token as string);
   });
 
-  when("Pedro intenta cancelarlo", async () => {
+  const cancel = await when("Pedro intenta cancelarlo", async () => {
     notation("usuario", "pedro@acme.test");
     notation("dueño del recurso", "maria@acme.test");
-    vars.cancel = await api.delete("/v1/orders/ord_01JD9", { headers: { authorization: `Bearer ${vars.token}` } });
+    return api.delete("/v1/orders/ord_01JD9", { headers: { authorization: `Bearer ${token}` } });
   });
 
-  then("la API responde 403", () => {
-    check("status == 403", vars.cancel.status(), 403, { expectedFailure: true });
+  await then("la API responde 403", () => {
+    check("status == 403", cancel.status(), 403, { expectedFailure: true });
   });
 
-  then("el pedido sigue en estado pending", async () => {
+  await then("el pedido sigue en estado pending", async () => {
     notation("usuario", "maria@acme.test");
     const p = await page();
     await p.goto(api.url("/pedidos/ord_01JD9"));

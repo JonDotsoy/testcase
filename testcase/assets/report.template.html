@@ -319,7 +319,14 @@ const PROTO = {
 };
 
 /* ---------- datos: el reporte JSON (schema 1.0) ---------- */
-const REPORT = JSON.parse(document.getElementById("report-data").textContent);
+const RAW = JSON.parse(document.getElementById("report-data").textContent);
+/* El JSON trae los valores reales (secrets). La vista los oculta en todo texto hasta que se pulsa "Mostrar valores sensibles". */
+const SECRET_VALUES = Object.values(RAW.secrets||{}).filter(v=>typeof v==="string"&&v.length>=4).sort((a,b)=>b.length-a.length);
+const maskKnown = s=>SECRET_VALUES.reduce((a,v)=>a.split(v).join("••••"), s);
+const maskDeep = v=>typeof v==="string"?maskKnown(v):Array.isArray(v)?v.map(maskDeep):v&&typeof v==="object"?Object.fromEntries(Object.entries(v).map(([k,x])=>[k,k==="secrets"?x:maskDeep(x)])):v;
+const REPORT = maskDeep(RAW);
+const RAW_REQ = new Map((RAW.requests||[]).map(r=>[r.id,r]));
+const assertRows = as=>as.map(a=>[a.expression, a.passed?1:0, a.expected!=null?(typeof a.expected==="string"?a.expected:JSON.stringify(a.expected)):undefined, a.actual!=null?(typeof a.actual==="string"?a.actual:JSON.stringify(a.actual)):undefined]);
 const RUN = REPORT.run;
 const SECRETS = REPORT.secrets || {};
 const HAS_SECRETS = Object.keys(SECRETS).length > 0;
@@ -375,7 +382,7 @@ const REQ = REPORT.requests.map(r=>{
     expected: r.assertions.some(a=>a.expectedFailure),
     reqH:hdrRows(r.request.headers), reqB:bodyView(r.request.body), reqBReal:bodyReal(r.request.body), reqRedactions:r.request.body.redactions||[],
     resH:hdrRows(res.headers), resB, resBReal, trailers: res.trailers ? hdrRows(res.trailers) : null,
-    asserts:r.assertions.map(a=>[a.expression, a.passed?1:0, a.expected!=null?String(a.expected):undefined, a.actual!=null?String(a.actual):undefined]),
+    asserts:assertRows(r.assertions), raw:{url:RAW_REQ.get(r.id).url, ann:RAW_REQ.get(r.id).annotations||{}, asserts:assertRows(RAW_REQ.get(r.id).assertions), rep:RAW_REQ.get(r.id).reproduce},
     rep:r.reproduce, evidence:r.evidence
   };
 });
@@ -592,7 +599,8 @@ const view = (r,x)=>!state.reveal?x:x===r.reqB?r.reqBReal:x===r.resB?r.resBReal:
 const ENV_HEADER = {TOKEN:"authorization", SERVICE_TOKEN:"x-service-token", PGPASSWORD:"password"};
 function reproduce(r){
   if(!r.rep) return "# testmania no generó un comando para este request";
-  let out = r.rep.command; if(!state.reveal) return out;
+  if(!state.reveal) return r.rep.command;
+  let out = (r.raw.rep||r.rep).command;
   (r.rep.env||[]).forEach(name=>{
     const h = r.reqH.find(h=>h[0]===ENV_HEADER[name] && h[3]);
     if(h && SECRETS[h[3]]!=null) out = out.split("$"+name).join(SECRETS[h[3]].replace(/^Bearer /,""));
@@ -605,9 +613,9 @@ function renderDetail(){
   if(!r){ $("#detail").innerHTML = '<div class="empty">Selecciona un request en la línea de tiempo.</div>'; return; }
   const P = PROTO[r.proto], u = ucOf(r.uc);
   const statusCls = r.status.cls;
-  const anns = Object.entries(r.ann).map(([k,v])=>`<span class="ann"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></span>`).join("");
+  const anns = Object.entries(state.reveal?r.raw.ann:r.ann).map(([k,v])=>`<span class="ann"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></span>`).join("");
   const sys = [["caso",u.id],["handler",r.file.split("/").pop()+(r.line?":"+r.line:"")],["run",RUN.id]].concat(r.evidence?[["evidencia",r.evidence.source+(r.evidence.file?" · "+r.evidence.file+(r.evidence.entry!=null?" #"+r.evidence.entry:""):"")]]:[]).concat([["request-id","tm_"+String(r.id).padStart(3,"0")]]).map(([k,v])=>`<span class="ann sys"><span class="k">${k}</span><span class="v mono">${esc(v)}</span></span>`).join("");
-  const asserts = r.asserts.map(a=>`<li class="${a[1]?"ok":"ko"}"><span class="ic">${a[1]?"✓":"✕"}</span><code>${esc(a[0])}</code>${!a[1]&&a[2]?`<div class="diff"><span>esperado</span><span class="e">${esc(a[2])}</span><span>recibido</span><span class="g">${esc(a[3])}</span></div>`:""}</li>`).join("");
+  const asserts = (state.reveal?r.raw.asserts:r.asserts).map(a=>`<li class="${a[1]?"ok":"ko"}"><span class="ic">${a[1]?"✓":"✕"}</span><code>${esc(a[0])}</code>${!a[1]&&a[2]?`<div class="diff"><span>esperado</span><span class="e">${esc(a[2])}</span><span>recibido</span><span class="g">${esc(a[3])}</span></div>`:""}</li>`).join("");
   const kindNote = r.transport || PROTO[r.proto].label;
   const reqPane = `<div class="d-sec" ${state.tab!=="req"?"hidden":""}>
       <h4>${P.hdr} <em>${r.reqH.length} entradas</em></h4>${hdrTable(r.reqH)}
@@ -623,7 +631,7 @@ function renderDetail(){
   $("#detail").innerHTML = `
     <div class="d-head" style="--pc:${P.color}">
       <div class="d-proto"><span class="badge">${P.label}</span><span class="badge ghost">${esc(kindNote)}</span>${r.fail?'<span class="pill fail">✕ Aserción fallida</span>':'<span class="pill pass">✓ Aserciones OK</span>'}${HAS_SECRETS?`<button class="reveal" data-reveal aria-pressed="${state.reveal}" title="Tokens, contraseñas y llaves de servicio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/>${state.reveal?'<circle cx="12" cy="12" r="3"/>':'<circle cx="12" cy="12" r="3"/><path d="M3 3l18 18"/>'}</svg>${state.reveal?"Ocultar valores sensibles":"Mostrar valores sensibles"}</button>`:""}</div>
-      <div class="d-target"><span class="m">${esc(r.verb)}</span>${esc(r.proto==="grpc"?r.target:r.url)}</div>
+      <div class="d-target"><span class="m">${esc(r.verb)}</span>${esc(r.proto==="grpc"?r.target:state.reveal?r.raw.url:r.url)}</div>
       <dl class="kv num" style="margin:0">
         <div><dt>Estado</dt><dd class="status ${statusCls}">${esc(r.status.code)}</dd></div>
         <div><dt>Duración</dt><dd>${ms(r.dur)}</dd></div>

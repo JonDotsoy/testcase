@@ -179,6 +179,7 @@ describe("render-report", () => {
   it("--fragment escribe solo el contenido y --strip-secrets quita los valores reales", () => {
     const r = runSync(baseReport());
     r.secrets = { sec_1: "valor-secreto-real" };
+    r.useCases[0].given = "un usuario con la clave valor-secreto-real"; // un valor real fuera de secrets también se oculta
     r.run.secretsIncluded = true;
     const f = join(dir, "frag.json");
     writeJson(f, r);

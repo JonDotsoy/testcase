@@ -11,7 +11,9 @@
  *   -o, --out          Archivo de salida. Por defecto, el mismo nombre del JSON con extensión .html.
  *   --template         Plantilla HTML. Por defecto, ../assets/report.template.html.
  *   --fragment         Escribe solo el contenido de la página, sin <!doctype>, <html>, <head> ni <body>.
- *   --strip-secrets    Quita el mapa `secrets` antes de generar, aunque el JSON lo traiga.
+ *   --strip-secrets    Genera una copia para compartir: quita el mapa `secrets` y oculta sus valores en todo el reporte
+ *                      (URL, anotaciones, aserciones). Sin esta opción, el HTML trae los valores reales ocultos tras el
+ *                      botón "Mostrar valores sensibles".
  *
  * Requiere Node 22.6 o superior (ejecuta TypeScript sin compilar). Con Node más antiguo: npx tsx render-report.ts …
  */
@@ -158,7 +160,12 @@ function main() {
   if (errors.length) fail(`el reporte no es válido:\n  - ${errors.join("\n  - ")}`);
 
   if (opts.stripSecrets && report.secrets) {
+    // Los valores reales también pueden estar en la URL, las anotaciones o las aserciones: se ocultan en todo el reporte.
+    const values = Object.values(report.secrets as Record<string, string>).filter((v) => typeof v === "string" && v.length >= 4).sort((a, b) => b.length - a.length);
+    const mask = (v: unknown): unknown =>
+      typeof v === "string" ? values.reduce((a, x) => a.split(x).join("••••"), v) : Array.isArray(v) ? v.map(mask) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, mask(x)])) : v;
     delete report.secrets;
+    report = mask(report) as Report;
     report.run.secretsIncluded = false;
   }
 

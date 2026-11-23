@@ -13,11 +13,16 @@
  * que sirven para unir cada request con las aserciones de `run-assertions.json`, y x-testcase-run con el id de la corrida.
  *
  * Uso:
- *   node import-har.ts <reporte.json> <evidencia.har> --service <nombre> [--assertions run-assertions.json] [--include-secrets]
+ *   node import-har.ts <reporte.json> <evidencia.har> --service <nombre> [--assertions run-assertions.json] [--no-secrets]
  *
  *   --service          Servicio `connected` del reporte al que apunta el proxy. Su `endpoint` es la URL real.
  *   --assertions       Aserciones que escribió run.ts. Por defecto, run-assertions.json junto al reporte, si existe.
- *   --include-secrets  Guarda los valores sensibles en `secrets`. Por defecto solo se guardan enmascarados.
+ *   --no-secrets       No guarda los valores reales en `secrets`: el reporte queda solo con los valores enmascarados.
+ *
+ * El reporte JSON conserva los datos reales, porque sirven para validar y reproducir cada request: los headers y
+ * campos sensibles quedan como `••••` con un `secretRef`, y su valor real va en el mapa `secrets`, junto con los
+ * valores declarados con sensitive(). La URL, las anotaciones y las aserciones quedan tal cual. El HTML los oculta y
+ * los muestra con el botón "Mostrar valores sensibles". Para compartir una copia sin ellos: render-report.ts --strip-secrets.
  *
  * Se omiten las entradas de otras corridas (por x-testcase-run o, sin ese header, por ser anteriores a run.startedAt) y los archivos estáticos del navegador
  * (CSS, JavaScript, imágenes y fuentes).
@@ -44,9 +49,9 @@ const flag = (name: string) => {
 const positional = args.filter((a, i) => !a.startsWith("--") && !(i > 0 && ["--service", "--assertions"].includes(args[i - 1])));
 const [reportFile, harFile] = positional;
 const serviceName = flag("--service");
-const includeSecrets = args.includes("--include-secrets");
+const includeSecrets = !args.includes("--no-secrets"); // --include-secrets se acepta por compatibilidad: es lo normal
 if (!reportFile || !harFile || !serviceName) {
-  console.log("Uso: node import-har.ts <reporte.json> <evidencia.har> --service <nombre> [--include-secrets]");
+  console.log("Uso: node import-har.ts <reporte.json> <evidencia.har> --service <nombre> [--no-secrets]");
   process.exit(1);
 }
 
@@ -103,6 +108,10 @@ try {
 }
 const hasSensitive = (t: string) => sensitiveList.some((v) => t.includes(v));
 const maskText = (t: string) => sensitiveList.reduce((acc, v) => acc.split(v).join("••••"), t);
+/** URL, anotaciones y aserciones: tal cual en el reporte; enmascaradas solo con --no-secrets. */
+const keep = (t: string) => (includeSecrets ? t : maskText(t));
+const keepDeep = (v: Json): Json =>
+  typeof v === "string" ? keep(v) : Array.isArray(v) ? v.map(keepDeep) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, keepDeep(x)])) : v;
 
 function maskHeader(name: string, value: string) {
   if (!SENSITIVE_HEADERS.has(name)) {
@@ -190,12 +199,12 @@ const skipped: string[] = [];
   const requestTag = reqHeaders.find((h) => h.name === "x-testcase-request")?.value;
   const stepTag = reqHeaders.find((h) => h.name === "x-testcase-step")?.value;
   const annotations = Object.fromEntries(
-    Object.entries(parseAnnotations(reqHeaders.find((h) => h.name === "x-testcase-annotations")?.value)).map(([k, v]) => [k, typeof v === "string" ? maskText(v) : v]),
+    Object.entries(parseAnnotations(reqHeaders.find((h) => h.name === "x-testcase-annotations")?.value)).map(([k, v]) => [k, typeof v === "string" ? keep(v) : v]),
   );
 
   const proxied = new URL(e.request.url);
-  const target = maskText(proxied.pathname + proxied.search);
-  const url = maskText(new URL(proxied.pathname + proxied.search, upstream).toString());
+  const target = keep(proxied.pathname + proxied.search);
+  const url = keep(new URL(proxied.pathname + proxied.search, upstream).toString());
   const reqBody = parseBody(e.request.postData?.text, e.request.postData?.mimeType);
   const resBody = parseBody(e.response.content?.text, e.response.content?.mimeType, e.response.content?.encoding);
 
@@ -260,11 +269,11 @@ for (const c of runChecks) {
     orphan.push(`${c.uc}: ${c.expression}`);
     continue;
   }
-  const a: Json = { id: `r${target.id}.a${target.assertions.length + 1}`, expression: c.expression, passed: c.passed };
+  const a: Json = { id: `r${target.id}.a${target.assertions.length + 1}`, expression: keep(c.expression), passed: c.passed };
   if (c.expectedFailure) a.expectedFailure = true;
   if (!c.passed) {
-    a.expected = c.expected;
-    a.actual = c.actual;
+    a.expected = keepDeep(c.expected);
+    a.actual = keepDeep(c.actual);
   }
   target.assertions.push(a);
   attached++;
@@ -278,11 +287,13 @@ for (const n of runNotations) {
     orphan.push(`${n.uc}: notation("${n.name}")`);
     continue;
   }
-  target.annotations = { ...(target.annotations ?? {}), [n.name]: n.value };
+  target.annotations = { ...(target.annotations ?? {}), [n.name]: keepDeep(n.value) };
   notationsAttached++;
 }
 
-if (!includeSecrets && Object.keys(report.secrets).length === 0) delete report.secrets;
+// Los valores de sensitive() quedan en secrets aunque solo aparezcan en la URL o en una aserción: el HTML los oculta donde estén.
+if (includeSecrets && imported) for (const v of sensitiveList) secretRef(v);
+if (Object.keys(report.secrets).length === 0) delete report.secrets;
 writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
 console.log(`Importados ${imported} requests desde ${harFile} al servicio ${serviceName}.`);
 if (skipped.length) console.log(`Omitidas ${skipped.length} entradas:\n  - ${skipped.join("\n  - ")}`);

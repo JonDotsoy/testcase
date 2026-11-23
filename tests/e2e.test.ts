@@ -99,30 +99,30 @@ export const api = defineService({ name: "api", endpoint: "http://127.0.0.1:${ap
 `;
     p = project({
       "UC-01.case.ts": `${header}
-export default defineCase(() => {
-  title("Cliente no puede cancelar un pedido ajeno");
+await defineCase(async () => {
+  await title("Cliente no puede cancelar un pedido ajeno");
   notation("tenant", "tienda-norte");
 
-  given("un pedido creado por María", async () => {
+  const token = await given("un pedido creado por María", async () => {
     notation("usuario", "pedro@acme.test");
     const password = sensitive(process.env.E2E_PASSWORD ?? "");
     const login = await api.post("/v1/auth/token", { data: { email: "pedro@acme.test", password } });
     ensure("status == 200", login.status(), 200);
-    vars.token = sensitive(login.body.access_token);
     notation("rol", login.body.user.role);
+    return sensitive(login.body.access_token as string);
   });
 
-  when("Pedro intenta cancelarlo", async () => {
+  const cancel = await when("Pedro intenta cancelarlo", async () => {
     notation("dueño del recurso", "maria@acme.test");
-    vars.cancel = await api.delete("/v1/orders/ord_01JD9", { headers: { authorization: \`Bearer \${vars.token}\` } });
+    return api.delete("/v1/orders/ord_01JD9", { headers: { authorization: \`Bearer \${token}\` } });
   });
 
-  then("la API responde 403", () => {
-    check("status == 403", vars.cancel.status(), 403);
-    check("detalle", vars.cancel.body.detail, "El pedido no pertenece al usuario.");
+  await then("la API responde 403", () => {
+    check("status == 403", cancel.status(), 403);
+    check("detalle", cancel.body.detail, "El pedido no pertenece al usuario.");
   });
 
-  then("el pedido sigue en estado pending", async () => {
+  await then("el pedido sigue en estado pending", async () => {
     const p = await page();
     await p.goto(api.url("/pedidos/ord_01JD9"));
     check('estado visible == "pending"', await p.locator("[data-estado]:not(:empty)").textContent(), "pending");
@@ -131,27 +131,25 @@ export default defineCase(() => {
 `,
       // Dos casos en un archivo, uno con un fallo esperado del sistema bajo prueba
       "propios.case.ts": `${header}
-defineCase(() => {
-  id("UC-02");
-  title("Cliente cancela su propio pedido");
-  given("un pedido de Pedro", async () => {
+await defineCase(async () => {
+  await id("UC-02");
+  await title("Cliente cancela su propio pedido");
+  await given("un pedido de Pedro", async () => {
     const login = await api.post("/v1/auth/token", { data: { password: sensitive(process.env.E2E_PASSWORD ?? "") } });
     vars.token = sensitive(login.body.access_token);
   });
-  when("Pedro lo cancela", async () => {
-    vars.res = await api.delete("/v1/orders/ord_PEDRO", { headers: { authorization: \`Bearer \${vars.token}\` } });
-  });
-  then("la API responde 204", () => check("status == 204", vars.res.status(), 204));
+  const res = await when("Pedro lo cancela", async () =>
+    api.delete("/v1/orders/ord_PEDRO", { headers: { authorization: \`Bearer \${vars.token}\` } }),
+  );
+  await then("la API responde 204", () => check("status == 204", res.status(), 204));
 });
 
-defineCase(() => {
-  id("UC-03");
-  title("Login con contraseña equivocada");
-  given("un usuario existente");
-  when("inicia sesión con otra contraseña", async () => {
-    vars.res = await api.post("/v1/auth/token", { data: { password: "otra-cosa" } });
-  });
-  then("la API responde 401", () => ensure("status == 401", vars.res.status(), 401));
+await defineCase(async () => {
+  await id("UC-03");
+  await title("Login con contraseña equivocada");
+  await given("un usuario existente");
+  const res = await when("inicia sesión con otra contraseña", async () => api.post("/v1/auth/token", { data: { password: "otra-cosa" } }));
+  await then("la API responde 401", () => ensure("status == 401", res.status(), 401));
 });
 `,
     });
@@ -216,7 +214,7 @@ defineCase(() => {
     assert.equal(p.report().run.number, 4);
   });
 
-  it("importa la evidencia, sincroniza y genera el HTML sin valores sensibles", async () => {
+  it("importa la evidencia, sincroniza y genera el HTML: el JSON guarda los valores reales y el HTML los oculta", async () => {
     const har = join(p.tc, "evidence", "api.har");
     const down = await local("down");
     assert.equal(down.code, 0, down.out);
@@ -261,12 +259,35 @@ defineCase(() => {
     assert.deepEqual(xhr.assertions.map((a: any) => a.expression), ['estado visible == "pending"']);
     assert.equal(final.services[0].requestCount, final.requests.length);
 
-    for (const file of [p.reportFile, html, join(p.tc, "run-assertions.json")]) {
-      const text = readFileSync(file, "utf8");
-      assert.ok(!text.includes(PASSWORD), `${file} trae la contraseña`);
-      assert.ok(!text.includes(TOKEN), `${file} trae el token`);
-    }
+    // report.json conserva los valores reales en secrets, para validar y reproducir
+    const secretValues = Object.values(final.secrets);
+    assert.ok(secretValues.includes(PASSWORD) && secretValues.includes(TOKEN));
+    assert.equal(final.run.secretsIncluded, true);
+    assert.equal(final.secrets[login.request.body.redactions.find((x: any) => x.path === "$.password").secretRef], PASSWORD);
     assert.ok(runOut.length > 0);
+
+    // El HTML los oculta hasta que se pulsa "Mostrar valores sensibles"
+    const { chromium } = await import("playwright");
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.fulfill({ status: 200, contentType: "text/css", body: "" }));
+      await page.goto("file://" + html);
+      await page.locator(`.tl-row[data-id="${login.id}"]`).click();
+      const visible = await page.locator("body").innerText();
+      assert.ok(!visible.includes(PASSWORD) && !visible.includes(TOKEN), "se ven valores sensibles sin pulsar el botón");
+      await page.locator("[data-reveal]").click();
+      await page.locator("#detail").getByText(PASSWORD).first().waitFor({ timeout: 5000 });
+    } finally {
+      await browser.close();
+    }
+
+    // Una copia para compartir no los trae en ninguna parte
+    const shared = join(p.tc, "report.shared.html");
+    const strip = await runAsync(join(SCRIPTS, "render-report.ts"), [p.reportFile, "-o", shared, "--strip-secrets"], { cwd: p.dir });
+    assert.equal(strip.code, 0, strip.out);
+    const sharedText = readFileSync(shared, "utf8");
+    assert.ok(!sharedText.includes(PASSWORD) && !sharedText.includes(TOKEN));
   });
 });
 

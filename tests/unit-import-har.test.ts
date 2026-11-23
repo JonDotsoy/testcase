@@ -138,17 +138,21 @@ describe("import-har", () => {
     assert.deepEqual(login.annotations, { usuario: "Peña", paso: "given", "time alive": "3600" });
   });
 
-  it("enmascara campos, headers y valores declarados con sensitive()", () => {
+  it("enmascara campos y headers sensibles con secretRef y guarda los valores reales en secrets", () => {
     const [login, del, , echo] = report.requests;
-    const all = JSON.stringify(report);
-    for (const secret of ["Pedro-77", "tok_1234567890", "xyz", "Pedro-77-secreto"]) assert.ok(!all.includes(secret), `aparece ${secret}`);
+    const { secrets, ...rest } = report;
+    const all = JSON.stringify(rest);
+    // Fuera de secrets, los valores solo aparecen donde se guardan tal cual: URL, anotaciones y aserciones
+    for (const secret of ["Pedro-77\"", "tok_1234567890", "xyz;"]) assert.ok(!all.includes(secret), `aparece ${secret}`);
+    const values = Object.values(secrets);
+    for (const v of ["Pedro-77", "tok_1234567890", "Bearer tok_1234567890", "Pedro-77-secreto", "abc"]) assert.ok(values.includes(v), `falta ${v} en secrets`);
     assert.equal(login.request.body.value.password, "••••");
     assert.equal(login.request.body.value.nested[0].token, "••••");
     assert.equal(login.request.body.value.nota, "clave ••••");
     const paths = login.request.body.redactions.map((r: any) => r.path);
     assert.deepEqual(paths.sort(), ["$.nested.0.token", "$.nota", "$.password"]);
     assert.equal(login.response.body.value.access_token, "••••");
-    assert.ok(login.url.endsWith("cliente=••••"), login.url);
+    assert.ok(login.url.endsWith("cliente=Pedro-77-secreto"), "la URL queda tal cual para reproducir el request");
     const cookie = login.response.headers.find((h: any) => h.name === "set-cookie");
     assert.equal(cookie.value, "sid=••••; Path=/");
     assert.equal(cookie.sensitive, true);
@@ -163,7 +167,8 @@ describe("import-har", () => {
     assert.equal(echo.response.body.encoding, "text");
     assert.equal(echo.response.body.value, "hola ••••");
     assert.deepEqual(echo.response.body.redactions.map((r: any) => r.path), ["$"]);
-    assert.equal(report.secrets, undefined, "sin --include-secrets no se guarda el mapa");
+    assert.equal(secrets[auth.secretRef], "Bearer tok_1234567890");
+    assert.equal(secrets[pwdRef], "Pedro-77");
   });
 
   it("reconoce GraphQL por el body", () => {
@@ -205,19 +210,27 @@ describe("import-har", () => {
     assert.equal(readJson(reportFile).requests.length, 4);
   });
 
-  it("--include-secrets guarda los valores reales en secrets", () => {
+  it("--no-secrets deja solo los valores enmascarados, también en la URL y las aserciones", () => {
     const { dir: d2, cleanup: c2 } = tempDir();
     try {
       const rf = join(d2, "report.json");
       writeJson(rf, baseReport({ startedAt: start.toISOString() }));
       const hf = join(d2, "api.har");
       writeJson(hf, har([harEntry({ method: "POST", url: "http://localhost:18080/login", started: at(10), headers: { "x-testcase-uc": "UC-01", authorization: "Basic cGVkcm86eA==" }, body: '{"password":"s3cr3t"}' })]));
-      const r = runScript(IMPORT, [rf, hf, "--service", "api", "--include-secrets"]);
+      writeJson(join(d2, "run-sensitive.json"), { runId: "run_1", values: ["valor-del-caso"] });
+      writeJson(join(d2, "run-assertions.json"), {
+        runId: "run_1",
+        cases: [{ id: "UC-01", checks: [{ tag: "s1", tagKind: "step", expression: "token == valor-del-caso", passed: false, expected: "valor-del-caso", actual: "otro" }] }],
+      });
+      writeJson(hf, har([harEntry({ method: "POST", url: "http://localhost:18080/login?k=valor-del-caso", started: at(10), headers: { "x-testcase-uc": "UC-01", "x-testcase-step": "s1", authorization: "Basic cGVkcm86eA==" }, body: '{"password":"s3cr3t"}' })]));
+      const r = runScript(IMPORT, [rf, hf, "--service", "api", "--no-secrets"]);
       assert.equal(r.code, 0, r.out);
       const out = readJson(rf);
-      assert.deepEqual(Object.values(out.secrets).sort(), ["Basic cGVkcm86eA==", "s3cr3t"]);
-      const ref = out.requests[0].request.body.redactions[0].secretRef;
-      assert.equal(out.secrets[ref], "s3cr3t");
+      assert.equal(out.secrets, undefined);
+      const text = JSON.stringify(out);
+      for (const v of ["valor-del-caso", "s3cr3t", "cGVkcm86eA=="]) assert.ok(!text.includes(v), `aparece ${v}`);
+      assert.ok(out.requests[0].url.endsWith("k=••••"));
+      assert.equal(out.requests[0].assertions[0].expected, "••••");
     } finally {
       c2();
     }

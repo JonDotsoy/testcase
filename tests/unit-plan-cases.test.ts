@@ -9,7 +9,7 @@ import { describe, it } from "node:test";
 import { caseSource, CASES, hasCommand, project, runScript, tempDir, WORKSPACE } from "./helpers.ts";
 
 const EXAMPLE = readFileSync(join(WORKSPACE, "examples", "UC-01.case.ts"), "utf8");
-const caseBody = (t = "Caso simple") => `defineCase(() => { title("${t}"); given("a"); when("b"); then("c"); });`;
+const caseBody = (t = "Caso simple") => `await defineCase(async () => { await title("${t}"); await given("a"); await when("b"); await then("c"); });`;
 const simple = (t?: string) => caseSource(caseBody(t));
 /** Caso simple que además declara servicios. */
 const withServices = (services: string) => caseSource(caseBody(), services);
@@ -45,7 +45,7 @@ describe("cases.ts: argumentos y scripts", () => {
 
   it("copia solo los scripts de origen al espacio de trabajo, junto con los módulos compartidos", () => {
     const p = project({
-      "UC-01.case.ts": caseSource(`defineCase(() => { title(saludo); given("a"); when("b"); then("c"); });`, `import { saludo } from "./comun.ts";`),
+      "UC-01.case.ts": caseSource(`await defineCase(async () => { await title(saludo); await given("a"); await when("b"); await then("c"); });`, `import { saludo } from "./comun.ts";`),
       "comun.ts": `export const saludo = "Caso con módulo compartido";\n`,
       "notas.md": "no se copia",
     });
@@ -81,7 +81,7 @@ describe("cases.ts: argumentos y scripts", () => {
       const ok = p.cases(["--typecheck"]);
       assert.equal(ok.code, 0, ok.out);
       assert.match(ok.out, /Tipos correctos/);
-      writeFileSync(join(p.tc, "cases", "UC-02.case.ts"), caseSource(`defineCase(() => { title(42); given("a"); when("b"); then("c"); });`));
+      writeFileSync(join(p.tc, "cases", "UC-02.case.ts"), caseSource(`await defineCase(async () => { await title(42); await given("a"); await when("b"); await then("c"); });`));
       const bad = p.cases(["--typecheck"]);
       assert.equal(bad.code, 2, bad.out);
       assert.match(bad.out, /UC-02\.case\.ts/);
@@ -120,7 +120,7 @@ describe("run.ts: carga de los casos", () => {
     expectError({ "UC-01.case.ts": caseSource(caseBody("Uno") + "\n" + caseBody("Dos")) }, /define 2 casos y "Uno" no tiene id/));
   it("ids repetidos entre archivos", () =>
     expectError(
-      { "UC-01.case.ts": simple(), "varios.case.ts": caseSource(`defineCase(() => { id("UC-01"); title("Otro"); given("a"); when("b"); then("c"); });`) },
+      { "UC-01.case.ts": simple(), "varios.case.ts": caseSource(`await defineCase(async () => { await id("UC-01"); await title("Otro"); await given("a"); await when("b"); await then("c"); });`) },
       /El id UC-01 está repetido/,
     ));
   it("un error al importar el script", () => expectError({ "UC-01.case.ts": `throw new Error("roto al cargar");\n` }, /UC-01\.case\.ts: roto al cargar/));

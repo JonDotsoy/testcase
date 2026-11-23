@@ -17,7 +17,7 @@ Archivos junto a este documento:
 1. **Los casos de uso van primero.** `useCases` es la entrada principal del reporte. Los requests, servicios y eventos de la línea de tiempo se relacionan con los casos de uso por id.
 2. **URLs tal cual se invocaron.** `target`, `url` e `invocations` guardan la URL o el método exacto que se llamó (`/v1/orders/ord_01JD3K8Q2Z7W4M`). Nunca se guardan templates como `/v1/orders/{id}`, porque testmania no puede inferirlos.
 3. **Sin IA.** `failure.explanation` es un texto determinista que se arma a partir de las aserciones fallidas.
-4. **Secretos ocultos por defecto.** Los valores sensibles se reemplazan por `••••` y se marcan con `sensitive` y `secretRef`. Los valores reales solo se incluyen en `secrets` cuando se corre con `--include-secrets`.
+4. **El JSON conserva los valores reales; el HTML los oculta.** Los valores sensibles se reemplazan por `••••` y se marcan con `sensitive` y `secretRef`, y su valor real va en `secrets`, porque sirve para validar y reproducir. El HTML los oculta hasta que se pulsa "Mostrar valores sensibles". `--strip-secrets` genera una copia sin ellos para compartir.
 5. **Tiempos relativos.** Todos los `*OffsetMs` se miden en milisegundos desde `run.startedAt`.
 
 ## Estructura general
@@ -32,7 +32,7 @@ report
 ├── requests[]     cada request con su request, response, anotaciones y aserciones
 ├── services[]     servicios provisionados (Podman) y conectados (hosts externos)
 ├── timeline[]     eventos ordenados: provisionamiento, checks, build, requests, desmontaje
-└── secrets?       solo con --include-secrets
+└── secrets?       valores reales (se omite con --no-secrets o --strip-secrets)
 ```
 
 ## Raíz
@@ -63,7 +63,7 @@ report
 | `exitCode` | integer | sí | Código de salida del proceso. |
 | `startedAt` / `finishedAt` | date-time | sí | En UTC. |
 | `durationMs` | number | sí | Duración total. |
-| `secretsIncluded` | boolean | no | `true` si se usó `--include-secrets`. Por defecto es `false`. |
+| `secretsIncluded` | boolean | no | `true` si el reporte trae `secrets`. |
 | `runtime` | object | sí | `engine` (`"podman"`) y `version`. |
 
 ## Manifest
@@ -272,8 +272,9 @@ El HTML muestra primero los eventos `request` agrupados por caso de uso y despu�
 
 ## Secretos
 
-- Por defecto, todo valor sensible se guarda como `"••••"`, con `sensitive: true` y un `secretRef`.
-- Con `testmania run --include-secrets`, el reporte agrega `secrets: { "sec_1": "<valor>" }` y `run.secretsIncluded: true`. El botón "Mostrar valores sensibles" del HTML usa este mapa. Si `secrets` no existe, el botón no aparece.
+- Todo header o campo sensible se guarda como `"••••"`, con `sensitive: true` y un `secretRef`, y el reporte agrega `secrets: { "sec_1": "<valor>" }` con los valores reales y `run.secretsIncluded: true`. El JSON no queda ofuscado: los valores sirven para validar y reproducir.
+- El HTML oculta como `••••` todo valor de `secrets`, en cualquier texto (URL, anotaciones, aserciones), y el botón "Mostrar valores sensibles" los muestra. Si `secrets` no existe, el botón no aparece.
+- `render-report --strip-secrets` genera una copia para compartir: quita `secrets` y oculta sus valores en todo el reporte. `import-har --no-secrets` no guarda los valores reales.
 - Un mismo secreto usado en varios lugares comparte su `secretRef`.
 - `reproduce.command` siempre usa variables de entorno (`$TOKEN`). El HTML las reemplaza solo cuando se muestran los valores sensibles.
 
@@ -287,7 +288,7 @@ El HTML muestra primero los eventos `request` agrupados por caso de uso y despu�
 
 - Si `requests[].id` debe ser un número o un id global (por ejemplo `run_148.17`) para cruzar corridas.
 - Si los bodies grandes deben guardarse en archivos aparte (`body.file`) en lugar de recortarse.
-- Si `--include-secrets` debe pedir confirmación o estar disponible solo en ejecución local.
+- Si compartir el reporte debe generar siempre la copia con `--strip-secrets`, para que el HTML con valores reales no salga de la máquina local.
 - Si `SUBSCRIPTION` de GraphQL usa `ws` como protocolo o `graphql` con `frames`.
 
 ## Generar el HTML
@@ -883,7 +884,7 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
       }
     },
     "secrets": {
-      "description": "Solo presente con --include-secrets. Mapa secretRef → valor real.",
+      "description": "Mapa secretRef → valor real. Se omite con --no-secrets y en las copias con --strip-secrets.",
       "type": "object",
       "propertyNames": {
         "pattern": "^sec_[0-9]+$"

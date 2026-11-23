@@ -33,7 +33,7 @@ const alive = (pid: number) => {
   }
 };
 const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
-const caseBody = `defineCase(() => { title("Caso"); given("a"); when("b"); then("c"); });`;
+const caseBody = `await defineCase(async () => { await title("Caso"); await given("a"); await when("b"); await then("c"); });`;
 
 describe("proxy.ts", () => {
   let upstream: Server;

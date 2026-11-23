@@ -4,20 +4,21 @@
  * Librería de casos de uso. Cada caso es un script autocontenido en `cases/UC-NN.case.ts`: importa todo lo que
  * necesita desde aquí y declara los servicios que usa con `defineService`.
  *
- *   import { defineCase, defineService, title, given, when, then, check, vars } from "../testcase.ts";
+ *   import { defineCase, defineService, title, given, when, then, check } from "../testcase.ts";
  *
  *   const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
  *
- *   export default defineCase(() => {
- *     title("Cliente no puede cancelar un pedido ajeno");
- *     given("un pedido creado por María", { usuario: "pedro@acme.test" }, async () => { … });
- *     when("Pedro intenta cancelarlo", async () => { vars.res = await api.delete("/v1/orders/ord_01JD9"); });
- *     then("la API responde 403", () => { check("status == 403", vars.res.status(), 403, { expectedFailure: true }); });
+ *   await defineCase(async () => {
+ *     await title("Cliente no puede cancelar un pedido ajeno");
+ *     const login = await given("Pedro inicia sesión", async () => api.post("/v1/auth/token", { data: { … } }));
+ *     const res = await when("Pedro intenta cancelar el pedido de María", async () => api.delete("/v1/orders/ord_01JD9"));
+ *     await then("la API responde 403", () => check("status == 403", res.status(), 403, { expectedFailure: true }));
  *   });
  *
- * `defineCase` llama a su función una vez, al cargar el archivo, para registrar el título y los pasos.
- * Los pasos se ejecutan después, en el orden en que se declaran. Cada paso recibe el contexto `t`, y también puede
- * usar las utilidades importadas (`check`, `ensure`, `notation`, `page`, `vars`) y los métodos de sus servicios.
+ * Todo se usa con await: defineCase, title, id, given, when y then. Al cargar el archivo, defineCase recorre su función
+ * sin ejecutar los pasos para registrar el título y los pasos. Al correr el caso la ejecuta de nuevo: cada paso corre
+ * en orden y `await given(…)` devuelve lo que devuelve su función. Dentro de un paso se usan las utilidades importadas
+ * (`check`, `ensure`, `notation`, `page`, `vars`) y los métodos de sus servicios.
  * El id sale del nombre del archivo (`UC-03.case.ts` → `UC-03`) o de `id("UC-03")`.
  *
  * Cada request (de un servicio, de `t.api()` o del navegador de `page()`) pasa por el proxy de evidencia
@@ -90,19 +91,18 @@ export interface CaseContext {
   readonly vars: Record<string, any>;
 }
 
-/* ---------- sintaxis defineCase(() => { title(); given(); when(); then(); }) ---------- */
+/* ---------- sintaxis await defineCase(async () => { await title(); await given(); … }) ---------- */
 
-/** Función de un paso. Recibe el contexto del caso. */
-export type StepFn = (t: CaseContext) => unknown | Promise<unknown>;
+/** Función de un paso. Recibe el contexto del caso. Lo que devuelve es el valor de `await given(…)`. */
+export type StepFn<T = unknown> = (t: CaseContext) => T | Promise<T>;
 type Text = string | (() => string);
 
 export interface CaseStep {
   paso: Paso;
   description: string;
-  fn?: StepFn;
 }
 
-/** Caso declarado con `defineCase(() => { … })`. `run.ts` completa el id con el nombre del archivo si falta. */
+/** Caso declarado con `defineCase(async () => { … })`. `run.ts` completa el id con el nombre del archivo si falta. */
 export interface CaseDefinition {
   /** Id estable del caso: UC-01, UC-02… */
   id: string;
@@ -112,8 +112,9 @@ export interface CaseDefinition {
   then: string;
   /** Anotaciones que llevan todos los requests del caso (por ejemplo `tenant`). */
   annotations?: Annotations;
-  /** Pasos en el orden declarado. */
+  /** Pasos en el orden en que aparecen. */
   steps: CaseStep[];
+  /** Corre el caso: ejecuta la función de defineCase con los pasos de verdad. */
   run(t: CaseContext): Promise<void>;
 }
 
@@ -122,14 +123,32 @@ interface Draft {
   title?: string;
   annotations: Annotations;
   steps: CaseStep[];
+  /** `vars` mientras se registran los pasos. */
+  vars: Record<string, any>;
 }
 
-let draft: Draft | undefined;
-
-function current(fn: string): Draft {
-  if (!draft) throw new Error(`${fn}() solo se usa dentro de defineCase(() => { … }).`);
-  return draft;
+/** Corrida del cuerpo de un caso: el contexto y el paso que está en curso, si hay uno. */
+interface Running {
+  t: CaseContext;
+  step?: string;
 }
+
+/** Registro: defineCase recorre su función sin ejecutar los pasos, para saber el título y los pasos antes de correr. */
+const collecting = new AsyncLocalStorage<Draft>();
+const running = new AsyncLocalStorage<Running>();
+/** Paso cuya función está corriendo en este contexto async (para detectar pasos anidados). */
+const inStep = new AsyncLocalStorage<string>();
+
+/**
+ * Valor que devuelve `await given(…)` mientras se registran los pasos: acepta cualquier propiedad o llamada
+ * (`login.body.access_token`, `res.status()`) para que el código entre pasos no falle sin datos reales.
+ */
+const placeholder: any = new Proxy(function () {}, {
+  get: (_, k) => (k === "then" ? undefined : k === Symbol.toPrimitive ? () => "" : k === Symbol.iterator ? function* () {} : placeholder),
+  apply: () => placeholder,
+  construct: () => placeholder,
+  set: () => true,
+});
 
 const text = (v: Text, fn: string): string => {
   const s = typeof v === "function" ? v() : v;
@@ -138,84 +157,130 @@ const text = (v: Text, fn: string): string => {
 };
 
 const definedCases: CaseDefinition[] = [];
+const pendingCases: Promise<unknown>[] = [];
 
-/** Casos definidos desde la última llamada, en orden. Lo usa run.ts después de importar cada archivo. */
-export function takeDefinedCases(): CaseDefinition[] {
+/**
+ * Casos definidos desde la última llamada, en orden. Lo usa run.ts después de importar cada archivo.
+ * Espera a los defineCase que el archivo no esperó con await, y falla si alguno falló.
+ */
+export async function takeDefinedCases(): Promise<CaseDefinition[]> {
+  const pending = pendingCases.splice(0);
+  await Promise.all(pending);
   return definedCases.splice(0);
 }
 
 /**
- * Define un caso de uso. La función registra el título y los pasos con title(), given(), when() y then().
- * Un archivo puede definir varios casos; en ese caso cada uno declara su id("UC-NN").
+ * Define un caso de uso. Se usa con await, igual que title(), id(), given(), when() y then():
+ *
+ *   await defineCase(async () => {
+ *     await title("Cliente no puede cancelar un pedido ajeno");
+ *     const login = await given("Pedro inicia sesión", async () => api.post("/v1/auth/token", { data }));
+ *     const res = await when("Pedro intenta cancelar el pedido de María", async () => api.delete(…));
+ *     await then("la API responde 403", () => check("status == 403", res.status(), 403));
+ *   });
+ *
+ * Al cargar el archivo, defineCase recorre la función sin ejecutar los pasos para registrar el título y los pasos
+ * (cada `await given(…)` devuelve un valor vacío). Al correr el caso, la vuelve a ejecutar y cada paso corre en orden,
+ * y devuelve lo que devuelve su función. Un archivo puede definir varios casos; cada uno declara su id("UC-NN").
  */
-export function defineCase(build: () => void): CaseDefinition {
-  if (draft) throw new Error("defineCase() no se puede anidar.");
-  const d: Draft = { annotations: {}, steps: [] };
-  draft = d;
-  try {
-    const r = build() as unknown;
-    if (r instanceof Promise) throw new Error("La función de defineCase() debe ser síncrona: el código async va dentro de given(), when() y then().");
-  } finally {
-    draft = undefined;
-  }
-  if (!d.title) throw new Error("Falta title() en defineCase().");
-  for (const p of ["given", "when", "then"] as const) {
-    if (!d.steps.some((s) => s.paso === p)) throw new Error(`"${d.title}": falta al menos un ${p}().`);
-  }
-  const join = (p: Paso) => d.steps.filter((s) => s.paso === p).map((s) => s.description).join(" y ");
-  const steps = d.steps;
-  const def: CaseDefinition = {
-    id: d.id ?? "",
-    title: d.title,
-    given: join("given"),
-    when: join("when"),
-    then: join("then"),
-    annotations: Object.keys(d.annotations).length ? d.annotations : undefined,
-    steps,
-    async run(t) {
-      await active.run(t, async () => {
-        for (const s of steps) {
-          await t.step(s.paso);
-          if (s.fn) await s.fn(t);
-        }
-      });
-    },
-  };
-  definedCases.push(def);
-  return def;
+export function defineCase(body: () => unknown | Promise<unknown>): Promise<CaseDefinition> {
+  if (collecting.getStore() || running.getStore()) throw new Error("defineCase() no se puede anidar.");
+  if (typeof body !== "function") throw new Error("defineCase() necesita una función.");
+  const d: Draft = { annotations: {}, steps: [], vars: {} };
+  const p = collecting.run(d, async () => {
+    await body();
+    if (!d.title) throw new Error("Falta title() en defineCase().");
+    for (const paso of ["given", "when", "then"] as const) {
+      if (!d.steps.some((s) => s.paso === paso)) throw new Error(`"${d.title}": falta al menos un ${paso}().`);
+    }
+    const join = (paso: Paso) => d.steps.filter((s) => s.paso === paso).map((s) => s.description).join(" y ");
+    const def: CaseDefinition = {
+      id: d.id ?? "",
+      title: d.title,
+      given: join("given"),
+      when: join("when"),
+      then: join("then"),
+      annotations: Object.keys(d.annotations).length ? d.annotations : undefined,
+      steps: d.steps,
+      async run(t) {
+        const r: Running = { t };
+        await running.run(r, async () => {
+          await body();
+          if (r.step) throw new Error(`Falta await antes de ${r.step}: el caso terminó con el paso todavía corriendo.`);
+        });
+      },
+    };
+    definedCases.push(def);
+    return def;
+  });
+  p.catch(() => {}); // run.ts lo informa desde takeDefinedCases(), aunque el archivo no use await
+  pendingCases.push(p);
+  return p;
+}
+
+function draftOrRun(fn: string): { d?: Draft; r?: Running } {
+  const d = collecting.getStore();
+  const r = running.getStore();
+  if (!d && !r) throw new Error(`${fn}() solo se usa dentro de defineCase(async () => { … }).`);
+  const nested = inStep.getStore();
+  if (nested) throw new Error(`${fn}() no se usa dentro de un paso (${nested}).`);
+  if (r?.step) throw new Error(`Falta await antes de ${r.step}: ${fn}() empezó con el paso anterior todavía corriendo.`);
+  return { d, r };
 }
 
 /** Título del caso, en palabras de la persona. Acepta un texto o una función que lo devuelve. */
-export function title(value: Text): void {
-  const d = current("title");
+export async function title(value: Text): Promise<void> {
+  const { d } = draftOrRun("title");
+  if (!d) return;
   if (d.title) throw new Error("title() se declara una sola vez por caso.");
   d.title = text(value, "title");
 }
 
 /** Id del caso (UC-NN). Opcional: por defecto sale del nombre del archivo. */
-export function id(value: string): void {
-  current("id").id = text(value, "id");
+export async function id(value: string): Promise<void> {
+  const { d } = draftOrRun("id");
+  if (d) d.id = text(value, "id");
 }
 
-function addStep(paso: Paso, description: Text, fn?: StepFn): void {
-  const d = current(paso);
+function runStep<T>(paso: Paso, description: Text, fn?: StepFn<T>): Promise<T> {
   if (fn !== undefined && typeof fn !== "function") throw new Error(`${paso}(): el segundo argumento debe ser una función.`);
-  d.steps.push({ paso, description: text(description, paso), ...(fn ? { fn } : {}) });
+  const desc = text(description, paso);
+  const r0 = running.getStore();
+  // Se revisa antes de devolver la promesa: un paso sin await deja el anterior en curso
+  if (r0?.step && !inStep.getStore()) throw new Error(`Falta await antes de ${r0.step}: ${paso}("${desc}") empezó con el paso anterior todavía corriendo.`);
+  const { d, r } = draftOrRun(paso);
+  if (d) {
+    d.steps.push({ paso, description: desc });
+    return Promise.resolve(placeholder as T);
+  }
+  const label = `${paso}("${desc}")`;
+  r!.step = label;
+  const t = r!.t;
+  const p = (async () => {
+    try {
+      await t.step(paso);
+      return fn ? await inStep.run(label, () => active.run(t, () => fn(t))) : (undefined as T);
+    } finally {
+      r!.step = undefined;
+    }
+  })();
+  p.catch(() => {}); // si falta el await, el error que importa es el de "Falta await"
+  return p;
 }
 
-/** Paso given: prepara el estado. */
-export function given(description: Text, fn?: StepFn): void {
-  addStep("given", description, fn);
+/** Paso given: prepara el estado. Se usa con await y devuelve lo que devuelve su función. */
+export function given<T = void>(description: Text, fn?: StepFn<T>): Promise<T> {
+  return runStep("given", description, fn);
 }
 
-/** Paso when: la acción que se prueba. */
-export function when(description: Text, fn?: StepFn): void {
-  addStep("when", description, fn);
+/** Paso when: la acción que se prueba. Se usa con await y devuelve lo que devuelve su función. */
+export function when<T = void>(description: Text, fn?: StepFn<T>): Promise<T> {
+  return runStep("when", description, fn);
 }
 
-/** Paso then: lo que se verifica. */
-export function then(description: Text, fn?: StepFn): void {
-  addStep("then", description, fn);
+/** Paso then: lo que se verifica. Se usa con await y devuelve lo que devuelve su función. */
+export function then<T = void>(description: Text, fn?: StepFn<T>): Promise<T> {
+  return runStep("then", description, fn);
 }
 
 /* ---------- servicios: defineService ---------- */
@@ -442,11 +507,13 @@ export function page(): Promise<Page> {
 export function notation<T>(name: string, value: T, opts?: NotationOptions): T {
   const t = active.getStore();
   if (t) return t.notation(name, value, opts);
-  if (draft) {
-    draft.annotations[annotationKey(name)] = annotationValue(value);
+  const d = collecting.getStore();
+  if (d) {
+    d.annotations[annotationKey(name)] = annotationValue(value);
     return value;
   }
-  throw new Error("notation() solo se usa dentro de defineCase(() => { … }) o de un paso.");
+  if (running.getStore()) return value; // anotación del caso: ya quedó registrada
+  throw new Error("notation() solo se usa dentro de defineCase(async () => { … }) o de un paso.");
 }
 
 export interface NotationOptions {
@@ -466,13 +533,20 @@ function annotationValue(v: unknown): string | number | boolean {
 }
 
 /** Datos compartidos entre los pasos del caso que está corriendo. Igual que `t.vars`. */
+const varsStore = (): Record<string, any> => {
+  const t = active.getStore() ?? running.getStore()?.t;
+  if (t) return t.vars;
+  const d = collecting.getStore();
+  if (d) return d.vars;
+  return context("vars").vars;
+};
 export const vars: Record<string, any> = new Proxy({} as Record<string, any>, {
-  get: (_, k) => context("vars").vars[k as string],
-  set: (_, k, v) => ((context("vars").vars[k as string] = v), true),
-  has: (_, k) => k in context("vars").vars,
-  deleteProperty: (_, k) => delete context("vars").vars[k as string],
-  ownKeys: () => Reflect.ownKeys(context("vars").vars),
-  getOwnPropertyDescriptor: (_, k) => Reflect.getOwnPropertyDescriptor(context("vars").vars, k),
+  get: (_, k) => varsStore()[k as string],
+  set: (_, k, v) => ((varsStore()[k as string] = v), true),
+  has: (_, k) => k in varsStore(),
+  deleteProperty: (_, k) => delete varsStore()[k as string],
+  ownKeys: () => Reflect.ownKeys(varsStore()),
+  getOwnPropertyDescriptor: (_, k) => Reflect.getOwnPropertyDescriptor(varsStore(), k),
 });
 
 /* ---------- implementación usada por run.ts ---------- */

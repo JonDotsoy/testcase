@@ -1,7 +1,7 @@
 /**
  * run.ts
  *
- * Ejecuta los casos de uso de `cases/*.case.ts` (escritos con defineCase(() => { title(); given(); when(); then(); })) con Playwright y prepara el reporte para importar la evidencia.
+ * Ejecuta los casos de uso de `cases/*.case.ts` (escritos con await defineCase(async () => { await title(); await given(); … })) con Playwright y prepara el reporte para importar la evidencia.
  *
  * Uso (desde el espacio de trabajo temporal):
  *   node run.ts --report /ruta/al/proyecto/.testcase/report.json --plan     # servicios: reporte + compose.yaml
@@ -71,9 +71,15 @@ for (const f of files) {
     console.error(`${f}: ${(e as Error).message}`);
     process.exit(1);
   }
-  const found = takeDefinedCases();
+  let found: CaseDefinition[];
+  try {
+    found = await takeDefinedCases();
+  } catch (e) {
+    console.error(`${f}: ${(e as Error).message}`);
+    process.exit(1);
+  }
   if (!found.length) {
-    console.error(`${f} no define ningún caso. Usa: defineCase(() => { title(…); given(…); when(…); then(…); })`);
+    console.error(`${f} no define ningún caso. Usa: await defineCase(async () => { await title(…); await given(…); await when(…); await then(…); })`);
     process.exit(1);
   }
   // Un caso solo en el archivo puede tomar el id del nombre (UC-03.case.ts). Con varios, cada uno declara id().
@@ -476,16 +482,11 @@ for (const { def, file } of defs) {
 }
 await browser?.close();
 
-// Los valores sensibles no salen en claro en las aserciones ni en las anotaciones.
-const maskDeep = (v: unknown): any =>
-  typeof v === "string" ? maskSensitive(v) : Array.isArray(v) ? v.map(maskDeep) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, maskDeep(x)])) : v;
-for (const r of results) {
-  r.checks = maskDeep(r.checks);
-  r.notations = maskDeep(r.notations);
-  if (r.error) r.error = maskSensitive(r.error);
-}
+// Las aserciones y anotaciones quedan con sus valores reales (sirven para validar y reproducir): import-har.ts
+// las enmascara si se importa con --no-secrets, y el HTML oculta los valores de sensitive() hasta que se pidan.
+for (const r of results) if (r.error) r.error = maskSensitive(r.error);
 writeFileSync(join(reportDir, "run-assertions.json"), JSON.stringify({ runId: report.run.id, startedAt: report.run.startedAt, finishedAt: new Date().toISOString(), cases: results }, null, 2) + "\n");
-// import-har.ts lee este archivo para ofuscar esos valores en la evidencia. Bórralo al terminar.
+// import-har.ts lee este archivo para marcar esos valores como sensibles en la evidencia. Bórralo al terminar.
 const sensitiveFile = join(reportDir, "run-sensitive.json");
 writeFileSync(sensitiveFile, JSON.stringify({ runId: report.run.id, values: sensitiveValues() }) + "\n", { mode: 0o600 });
 writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");

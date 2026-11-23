@@ -52,7 +52,7 @@ Los casos se escriben en `.testcase/cases/` del proyecto. No instales nada en el
 Los casos van en `.testcase/cases/*.case.ts`: un archivo por caso (`UC-NN.case.ts`) o varios casos relacionados en un archivo. **Cada script es autocontenido**: importa desde `testcase.ts` todo lo que usa y declara con `defineService` los servicios que necesita. Así, el script basta para saber qué se prueba, contra qué y cómo.
 
 ```ts
-import { defineCase, defineService, fromEnv, sensitive, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";
+import { defineCase, defineService, fromEnv, sensitive, title, given, when, then, notation, check, ensure, page } from "../testcase.ts";
 
 // Servicio URL que ya existe: sus requests pasan por el proxy de evidencia.
 const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
@@ -71,29 +71,31 @@ const db = defineService({
 // Proceso local: un comando de shell en su carpeta, sin contenedor. Con port, habla HTTP y tiene proxy local.
 const web = defineService({ name: "web", command: "bun run dev", cwd: "./apps/web", port: 3000, dependsOn: [db], health: "GET /healthz" });
 
-export default defineCase(() => {
-  title(() => "Cliente no puede cancelar un pedido ajeno");
+// Todo se usa con await: defineCase, title, id, given, when y then.
+await defineCase(async () => {
+  await title(() => "Cliente no puede cancelar un pedido ajeno");
   notation("tenant", "tienda-norte");                 // anotación de todo el caso
 
-  given("un pedido creado por María", async () => {
+  // Cada paso devuelve lo que devuelve su función: los datos pasan de un paso a otro sin vars.
+  const token = await given("un pedido creado por María", async () => {
     notation("usuario", "pedro@acme.test");          // antes del request: la lleva el request que sigue
-    const password = sensitive(process.env.PEDRO_PASSWORD); // en el reporte queda como ••••
+    const password = sensitive(process.env.PEDRO_PASSWORD); // en el HTML queda oculto
     const login = await api.post("/v1/auth/token", { data: { email: "pedro@acme.test", password } });
     ensure("status == 200", login.status(), 200);
-    vars.token = sensitive(login.body.access_token);  // body ya viene parseado
     notation("rol", login.body.user.role);            // después del request: se une a ese request
+    return sensitive(login.body.access_token);        // body ya viene parseado
   });
 
-  when("Pedro intenta cancelarlo", async () => {
+  const cancel = await when("Pedro intenta cancelarlo", async () => {
     notation("dueño del recurso", "maria@acme.test");
-    vars.cancel = await api.delete("/v1/orders/ord_01JD9", { headers: { authorization: `Bearer ${vars.token}` } });
+    return api.delete("/v1/orders/ord_01JD9", { headers: { authorization: `Bearer ${token}` } });
   });
 
-  then("la API responde 403", () => {
-    check("status == 403", vars.cancel.status(), 403, { expectedFailure: true });
+  await then("la API responde 403", () => {
+    check("status == 403", cancel.status(), 403, { expectedFailure: true });
   });
 
-  then("el pedido sigue en estado pending", async () => {
+  await then("el pedido sigue en estado pending", async () => {
     notation("usuario", "maria@acme.test");
     const p = await page();                           // navegador de Playwright, también por el proxy
     await p.goto(api.url("/pedidos/ord_01JD9"));
@@ -106,22 +108,22 @@ La API completa:
 
 | | |
 |---|---|
-| `defineCase(() => { … })` | Declara el caso. La función corre una vez al cargar el archivo y debe ser síncrona: el código async va dentro de los pasos. Un archivo puede tener varios `defineCase` (por ejemplo `pedidos.case.ts` con UC-04 y UC-05 que comparten servicios); `export default` es opcional. |
-| `title(texto)` · `title(() => texto)` | Título del caso. Una vez por caso. |
-| `id("UC-NN")` | Si el archivo tiene un solo caso, es opcional: el id sale del nombre (`UC-03.case.ts` → `UC-03`). Si tiene varios, cada caso declara el suyo. |
-| `given(texto, fn?)` · `when(…)` · `then(…)` | Pasos. Se ejecutan en el orden en que se escriben. `fn` es opcional: `given("un pedido de María")` deja el paso solo como texto. |
+| `await defineCase(async () => { … })` | Declara el caso. Al cargar el archivo, recorre su función **sin ejecutar los pasos** para registrar el título y los pasos (cada `await given(…)` devuelve un valor vacío que acepta cualquier propiedad). Al correr el caso la ejecuta de nuevo, ahora con los pasos de verdad. Un archivo puede tener varios `defineCase` (por ejemplo `pedidos.case.ts` con UC-04 y UC-05 que comparten servicios). |
+| `await title(texto)` · `await title(() => texto)` | Título del caso. Una vez por caso. |
+| `await id("UC-NN")` | Si el archivo tiene un solo caso, es opcional: el id sale del nombre (`UC-03.case.ts` → `UC-03`). Si tiene varios, cada caso declara el suyo. |
+| `await given(texto, fn?)` · `await when(…)` · `await then(…)` | Pasos. Corren en el orden en que se escriben y devuelven lo que devuelve `fn`: `const login = await given("…", async () => api.post(…))`. `fn` es opcional: `await given("un pedido de María")` deja el paso solo como texto. Sin `await`, o con un paso dentro de otro, el caso falla con un mensaje claro. Los requests, `check`, `ensure` y `page()` van dentro de un paso. |
 | `defineService({ name, endpoint, … })` | Servicio URL que ya existe (`connected`). Campos: `endpoint`, `version?`, `health?`. |
 | `defineService({ name, command, … })` | Proceso local (`process`): un comando de shell que corre en esta máquina, sin contenedor. Campos: `command`, `cwd?` (relativa a la raíz del proyecto), `port?` (donde escucha; con puerto habla HTTP y va por un proxy local), `env?`, `dependsOn?`, `artifacts?`, `health?` (`GET /ruta` lo corre `local.ts`), `http?`. Con `image` o `build`, `command` es el comando del contenedor, no un proceso local. |
 | `defineService({ name, image \| build, … })` | Contenedor (`provisioned`). Campos: `image` o `build` (texto con el contexto, o `{ context, dockerfile?, args?, target? }`; rutas relativas a la raíz del proyecto), `command?`, `tmpfs?` (rutas en memoria), `ports?` (`{ container, host? }`; sin `host` se asigna uno desde 55000), `env?`, `dependsOn?` (nombres o servicios), `storage?`, `artifacts?` (`{ kind, source, description? }`), `health?`, `http?` (si habla HTTP, va por proxy). |
-| `fromEnv("VAR")` | Valor de `env` que sale del entorno del host. Queda enmascarado en el reporte, y si la variable existe al correr, su valor se ofusca como con `sensitive`. |
-| `sensitive(valor)` | Declara un valor o texto sensible y lo devuelve tal cual: `const password = sensitive(process.env.PEDRO_PASSWORD)`. El caso usa el valor real; en el reporte y en el HTML queda como `••••` donde aparezca (URL, headers, bodies, anotaciones, aserciones). Va en el módulo, en `defineCase` o en un paso, por ejemplo `sensitive(login.body.access_token)`. Valores de menos de 4 caracteres no se registran. |
+| `fromEnv("VAR")` | Valor de `env` que sale del entorno del host. En la lista de servicios del reporte queda como `••••` con el nombre de la variable, y si la variable existe al correr, su valor se trata como `sensitive`. |
+| `sensitive(valor)` | Declara un valor o texto sensible y lo devuelve tal cual: `const password = sensitive(process.env.PEDRO_PASSWORD)`. El caso usa el valor real y `report.json` lo conserva (en `secrets`); el HTML lo oculta como `••••` donde aparezca (URL, headers, bodies, anotaciones, aserciones) hasta que se pulsa "Mostrar valores sensibles". Va en el módulo, en `defineCase` o en un paso, por ejemplo `sensitive(login.body.access_token)`. Valores de menos de 4 caracteres no se registran. |
 | `servicio.get/post/put/patch/delete/fetch(ruta, opts)` | Request HTTP (Playwright) por el proxy del servicio, con `data`, `form`, `params`, `headers`. Devuelve `body` (el JSON ya parseado, o el texto), `status()` y `headers()`. |
 | `servicio.url(ruta)` | URL del servicio por el proxy, para `page().goto()`. |
-| `notation(nombre, valor, { response? })` | Define una anotación y devuelve el valor: `const timeAlive = notation("time alive", res.body.timeAlive)`. En el cuerpo de `defineCase` es de todo el caso. En un paso, antes de un request, la llevan los requests que siguen en ese paso. Después de un request, se une a ese request. |
+| `notation(nombre, valor, { response? })` | Define una anotación y devuelve el valor: `const timeAlive = notation("time alive", res.body.timeAlive)`. En el cuerpo de `defineCase`, fuera de los pasos, es de todo el caso. En un paso, antes de un request, la llevan los requests que siguen en ese paso. Después de un request, se une a ese request. |
 | `check(expresión, actual, esperado, { response?, expectedFailure? })` | Registra una aserción y sigue. Sin `response`, se une al último request del paso, o al último del caso si el paso no hizo ninguno (por ejemplo, un `then` que revisa la respuesta del `when`). |
 | `ensure(…)` | Igual que `check`, pero detiene el caso si falla. |
 | `page()` | Página de Playwright. Todos sus requests llevan las etiquetas del caso y del paso. |
-| `vars` | Datos compartidos entre los pasos del caso. |
+| `vars` | Datos compartidos entre los pasos del caso. Casi nunca hace falta: usa lo que devuelve cada paso. |
 
 Cada caso necesita `title` y al menos un `given`, un `when` y un `then`. En el reporte, los textos de pasos repetidos se unen con " y ". Cada `fn` también recibe el contexto `t` con lo mismo (`t.check`, `t.require`, `t.notation`, `t.page`, `t.vars`, `t.api(nombre)`, `t.url(nombre, ruta)`), por si prefieres no importar las utilidades.
 
@@ -198,7 +200,7 @@ Después:
    bun <skill>/scripts/import-har.ts .testcase/report.json .testcase/evidence/api.har --service api
    ```
 
-   Agrega un request por entrada del HAR con headers, bodies, estado y tiempos reales. Enmascara los secretos, cambia la URL local por la del servicio, deja `evidence` apuntando a la entrada del HAR y une cada aserción y cada `notation` de `run-assertions.json` con su request. Omite las entradas sin caso, las de corridas anteriores y los archivos estáticos del navegador. No duplica si lo corres de nuevo.
+   Agrega un request por entrada del HAR con headers, bodies, estado y tiempos reales. Marca los valores sensibles (enmascarados con `secretRef` y su valor real en `secrets`), cambia la URL local por la del servicio, deja `evidence` apuntando a la entrada del HAR y une cada aserción y cada `notation` de `run-assertions.json` con su request. Omite las entradas sin caso, las de corridas anteriores y los archivos estáticos del navegador. No duplica si lo corres de nuevo.
 
 El proxy cubre HTTP y GraphQL. Para gRPC, WebSocket o SQL registra los requests en el JSON desde la salida de la herramienta (`grpcurl`, `websocat`, `psql`), con `evidence.source: "agent"`, sus aserciones y los mismos campos que un request importado.
 
@@ -222,7 +224,7 @@ Entrega `.testcase/report.html` a la persona y resume en pocas frases:
 - Cuántos casos pasaron, fallaron o quedaron pendientes.
 - Para cada fallo: el caso por título e id, qué se esperaba y qué llegó, y si parece un bug del servicio o un error del caso.
 
-Al terminar, borra `.testcase/run-sensitive.json`. El espacio de trabajo temporal se reutiliza en la próxima corrida; si la persona no va a volver a correr, agrega `--clean` a la última corrida para borrarlo.
+Al terminar, borra `.testcase/run-sensitive.json`. Si la persona va a compartir el reporte, entrégale también la copia generada con `--strip-secrets` (ver [Secretos](#secretos)). El espacio de trabajo temporal se reutiliza en la próxima corrida; si la persona no va a volver a correr, agrega `--clean` a la última corrida para borrarlo.
 
 ## Cambios posteriores
 
@@ -247,10 +249,14 @@ Las claves van en minúsculas (se permiten tildes, ñ y espacios), con `-` o `_`
 
 ## Secretos
 
-- Declara con `sensitive()` todo valor sensible que use un caso: contraseñas, tokens que recibe, llaves, datos personales que no deben verse. `run.ts` los ofusca en `run-assertions.json` y los deja en `.testcase/run-sensitive.json` (permisos 600) para que `import-har.ts` los ofusque en la evidencia importada. El HAR crudo de `evidence/` sí los trae: no lo compartas.
-- Todo header, variable o campo de body con un token, contraseña, cookie o llave va enmascarado (`"••••"`, `"Bearer ••••"`) con `sensitive: true` y un `secretRef` (`sec_1`, `sec_2`…). En los bodies, usa `redactions` con el JSONPath del campo.
-- Por defecto **no** escribas el mapa `secrets`. Agrégalo solo si la persona pide ver los valores sensibles en el reporte. En ese caso el HTML muestra el botón "Mostrar valores sensibles".
-- Para generar una copia sin secretos de un reporte que sí los trae: `render-report.ts … --strip-secrets`.
+`report.json` **no queda ofuscado**: conserva los valores reales, porque sirven para validar el resultado y reproducir cada request. El HTML es el que los oculta, y los muestra con el botón "Mostrar valores sensibles".
+
+- Declara con `sensitive()` todo valor sensible que use un caso: contraseñas, tokens que recibe, llaves, datos personales que no deben verse a simple vista. `run.ts` los deja en `.testcase/run-sensitive.json` (permisos 600) para que `import-har.ts` los marque en la evidencia.
+- `import-har.ts` deja cada header, variable o campo de body con un token, contraseña, cookie o llave como `"••••"` (o `"Bearer ••••"`) con `sensitive: true` y un `secretRef` (`sec_1`, `sec_2`…), y guarda el valor real en el mapa `secrets`, junto con los valores de `sensitive()`. En los bodies, `redactions` lleva el JSONPath de cada campo. La URL, las anotaciones y las aserciones quedan tal cual.
+- `render-report.ts` incrusta el JSON completo en el HTML: la vista oculta como `••••` todo valor de `secrets`, donde aparezca, hasta que se pulsa el botón.
+- Por eso `report.json`, `report.html`, `run-*.json` y el HAR de `evidence/` son archivos sensibles: no los subas al repositorio ni los compartas.
+- Para compartir el reporte, genera una copia sin los valores reales: `render-report.ts .testcase/report.json -o reporte-compartible.html --strip-secrets`. Quita `secrets` y oculta sus valores en todo el reporte.
+- Si la persona no quiere los valores reales ni en el JSON, importa con `import-har.ts … --no-secrets`.
 
 ## Qué no hacer
 

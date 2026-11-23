@@ -66,58 +66,63 @@ function runCase(def: CaseDefinition, reply?: Parameters<typeof fakeApi>[0], run
 }
 
 describe("defineCase", () => {
-  it("registra título, id y pasos en orden, y une los textos repetidos con ' y '", () => {
-    takeDefinedCases();
-    const def = defineCase(() => {
-      id("UC-10");
-      title(() => "Título " + "calculado");
-      given("un pedido");
-      when("se cancela", async () => {});
-      then("responde 403", async () => {});
-      then("el pedido sigue pending");
+  it("registra título, id y pasos en orden sin ejecutarlos, y une los textos repetidos con ' y '", async () => {
+    await takeDefinedCases();
+    let ran = false;
+    const def = await defineCase(async () => {
+      await id("UC-10");
+      await title(() => "Título " + "calculado");
+      const pedido = await given("un pedido", async () => ((ran = true), { id: "ord_1" }));
+      // Al registrar, el valor de un paso acepta propiedades y llamadas sin fallar
+      const ruta = `/v1/orders/${pedido.id}`;
+      await when("se cancela", async () => ((ran = true), ruta));
+      await then("responde 403", async () => {});
+      await then("el pedido sigue pending");
     });
+    assert.equal(ran, false, "los pasos no corren al registrar");
     assert.equal(def.id, "UC-10");
     assert.equal(def.title, "Título calculado");
     assert.equal(def.given, "un pedido");
     assert.equal(def.then, "responde 403 y el pedido sigue pending");
     assert.deepEqual(
-      def.steps.map((s) => [s.paso, s.description, !!s.fn]),
+      def.steps.map((s) => [s.paso, s.description]),
       [
-        ["given", "un pedido", false],
-        ["when", "se cancela", true],
-        ["then", "responde 403", true],
-        ["then", "el pedido sigue pending", false],
+        ["given", "un pedido"],
+        ["when", "se cancela"],
+        ["then", "responde 403"],
+        ["then", "el pedido sigue pending"],
       ],
     );
-    assert.deepEqual(takeDefinedCases(), [def]);
-    assert.deepEqual(takeDefinedCases(), [], "takeDefinedCases vacía la lista");
+    assert.deepEqual(await takeDefinedCases(), [def]);
+    assert.deepEqual(await takeDefinedCases(), [], "takeDefinedCases vacía la lista");
   });
 
-  it("deja el id vacío si no se declara (run.ts lo toma del archivo)", () => {
-    const def = defineCase(() => {
-      title("x");
-      given("a");
-      when("b");
-      then("c");
+  it("takeDefinedCases espera a los defineCase sin await y deja el id vacío si no se declara", async () => {
+    defineCase(async () => {
+      await title("sin await");
+      await given("a");
+      await when("b");
+      await then("c");
     });
+    const [def] = await takeDefinedCases();
+    assert.equal(def.title, "sin await");
     assert.equal(def.id, "");
-    takeDefinedCases();
   });
 
   for (const [name, build, msg] of [
-    ["sin title", () => (given("a"), when("b"), then("c")), /Falta title\(\)/],
-    ["sin given", () => (title("x"), when("b"), then("c")), /falta al menos un given\(\)/],
-    ["sin when", () => (title("x"), given("a"), then("c")), /falta al menos un when\(\)/],
-    ["sin then", () => (title("x"), given("a"), when("b")), /falta al menos un then\(\)/],
-    ["title dos veces", () => (title("x"), title("y")), /una sola vez/],
+    ["sin title", async () => (await given("a"), await when("b"), await then("c")), /Falta title\(\)/],
+    ["sin given", async () => (await title("x"), await when("b"), await then("c")), /falta al menos un given\(\)/],
+    ["sin when", async () => (await title("x"), await given("a"), await then("c")), /falta al menos un when\(\)/],
+    ["sin then", async () => (await title("x"), await given("a"), await when("b")), /falta al menos un then\(\)/],
+    ["title dos veces", async () => (await title("x"), await title("y")), /una sola vez/],
     ["title vacío", () => title("  "), /texto no vacío/],
-    ["función async", async () => {}, /debe ser síncrona/],
-    ["defineCase anidado", () => defineCase(() => {}), /no se puede anidar/],
-    ["paso con segundo argumento inválido", () => (title("x"), given("a", "no" as any)), /debe ser una función/],
+    ["defineCase anidado", () => defineCase(async () => {}), /no se puede anidar/],
+    ["paso con segundo argumento inválido", async () => (await title("x"), await given("a", "no" as any)), /debe ser una función/],
+    ["request fuera de un paso", async () => (await title("x"), page()), /solo funciona dentro de un paso/],
   ] as const) {
-    it(`falla con un mensaje claro: ${name}`, () => {
-      assert.throws(() => defineCase(build as any), msg);
-      takeDefinedCases();
+    it(`falla con un mensaje claro: ${name}`, async () => {
+      await assert.rejects(defineCase(build as any), msg);
+      await assert.rejects(takeDefinedCases(), msg, "takeDefinedCases también lo informa");
     });
   }
 
@@ -126,7 +131,9 @@ describe("defineCase", () => {
     ["given", () => given("x")],
     ["id", () => id("UC-01")],
   ] as const) {
-    it(`${name}() fuera de defineCase falla`, () => assert.throws(fn, /solo se usa dentro de defineCase/));
+    it(`${name}() fuera de defineCase falla`, async () => {
+      await assert.rejects(async () => fn(), /solo se usa dentro de defineCase/);
+    });
   }
 
   it("las utilidades fuera de un paso fallan con un mensaje claro", () => {
@@ -139,31 +146,35 @@ describe("defineCase", () => {
 });
 
 describe("contexto de un caso", () => {
-  it("corre los pasos en orden, manda los headers x-testcase-* y lee el body como JSON", async () => {
+  it("corre los pasos en orden, devuelve sus valores, manda los headers x-testcase-* y lee el body como JSON", async () => {
     const order: string[] = [];
     const api = defineService({ name: "api", endpoint: "https://api.example.com" });
-    const def = defineCase(() => {
-      id("UC-01");
-      title("x");
+    const def = await defineCase(async () => {
+      await id("UC-01");
+      await title("x");
       notation("tenant", "tienda-norte");
-      given("a", async () => {
+      const login = await given("a", async () => {
         order.push("given");
         notation("usuario", "pedro@acme.test");
-        vars.res = await api.post("/v1/auth/token", { data: { email: "pedro@acme.test" }, headers: { "x-extra": "1" } });
+        return api.post("/v1/auth/token", { data: { email: "pedro@acme.test" }, headers: { "x-extra": "1" } });
       });
-      when("b", async (t) => {
+      const token: string = login.body.access_token; // entre pasos: con datos reales al correr
+      order.push(`token=${token}`);
+      await when("b", async (t) => {
         order.push("when");
-        assert.equal(t.vars.res.body.access_token, "tok");
+        assert.equal(t.vars.n, undefined);
       });
-      then("c", () => {
+      await then("c", () => {
         order.push("then");
       });
     });
-    takeDefinedCases();
+    await takeDefinedCases();
+    assert.deepEqual(order, ["token="], "al registrar, el token es un valor vacío");
+    order.length = 0;
     const r = runCase(def, () => ({ body: '{"access_token":"tok"}' }), "run_9");
     await def.run(r.ctx.t);
     await r.ctx.close();
-    assert.deepEqual(order, ["given", "when", "then"]);
+    assert.deepEqual(order, ["given", "token=tok", "when", "then"]);
     assert.equal(r.calls.length, 1);
     const c = r.calls[0];
     assert.equal(c.baseURL, "http://localhost:18080/");
@@ -180,27 +191,56 @@ describe("contexto de un caso", () => {
     assert.equal(r.disposed(), 1, "cierra los clientes HTTP");
   });
 
+  it("un paso sin await o anidado falla con un mensaje claro", async () => {
+    const sinAwait = await defineCase(async () => {
+      await title("x");
+      given("a", async () => new Promise((ok) => setTimeout(ok, 20)));
+      await when("b");
+      await then("c");
+    });
+    const anidado = await defineCase(async () => {
+      await title("y");
+      await given("a", async () => {
+        await when("b dentro de a");
+      });
+      await when("b");
+      await then("c");
+    });
+    const alFinal = await defineCase(async () => {
+      await title("z");
+      await given("a");
+      await when("b");
+      then("c", async () => new Promise((ok) => setTimeout(ok, 20)));
+    });
+    await takeDefinedCases();
+    await assert.rejects(sinAwait.run(runCase(sinAwait).ctx.t), /Falta await antes de given\("a"\): when\("b"\) empezó con el paso anterior todavía corriendo/);
+    await assert.rejects(anidado.run(runCase(anidado).ctx.t), /when\(\) no se usa dentro de un paso \(given\("a"\)\)/);
+    await assert.rejects(alFinal.run(runCase(alFinal).ctx.t), /Falta await antes de then\("c"\): el caso terminó/);
+  });
+
   it("une check y notation al request correcto", async () => {
     const api = defineService({ name: "api", endpoint: "https://api.example.com" });
-    const def = defineCase(() => {
-      id("UC-02");
-      title("x");
-      given("sin requests", () => {
+    const def = await defineCase(async () => {
+      await id("UC-02");
+      await title("x");
+      await given("sin requests", () => {
         check("antes de cualquier request", 1, 1);
       });
-      when("dos requests", async () => {
-        vars.a = await api.get("/a");
-        vars.b = await api.get("/b");
-        notation("después de b", vars.b.body.n);
-        notation("sobre a", "x", { response: vars.a });
-        check("sin response: el último del paso", vars.b.status(), 200);
-        check("con response", vars.a.status(), 500, { response: vars.a, expectedFailure: true });
+      const [a, b] = await when("dos requests", async () => {
+        const a = await api.get("/a");
+        const b = await api.get("/b");
+        notation("después de b", b.body.n);
+        notation("sobre a", "x", { response: a });
+        check("sin response: el último del paso", b.status(), 200);
+        check("con response", a.status(), 500, { response: a, expectedFailure: true });
+        return [a, b];
       });
-      then("sin requests propios", () => {
-        check("sin requests en el paso: el último del caso", vars.b.body.n, 2);
+      await then("sin requests propios", () => {
+        check("sin requests en el paso: el último del caso", b.body.n, 2);
+        check("valor de otro paso", a.body.n, 1);
       });
     });
-    takeDefinedCases();
+    await takeDefinedCases();
     const r = runCase(def, (p) => (p === "a" ? { status: 500, body: '{"n":1}' } : { body: '{"n":2}' }));
     await def.run(r.ctx.t);
     const [tagA, tagB] = r.requestTags;
@@ -211,6 +251,7 @@ describe("contexto de un caso", () => {
         ["sin response: el último del paso", "request", "b", true],
         ["con response", "request", "a", true],
         ["sin requests en el paso: el último del caso", "request", "b", true],
+        ["valor de otro paso", "request", "b", true],
       ],
     );
     assert.equal(r.checks[2].expectedFailure, true);
@@ -220,41 +261,66 @@ describe("contexto de un caso", () => {
     ]);
   });
 
+  it("vars sigue disponible entre pasos y en el cuerpo del caso", async () => {
+    const seen: unknown[] = [];
+    const def = await defineCase(async () => {
+      await title("x");
+      await given("a", () => {
+        vars.n = 1;
+      });
+      vars.n += 1;
+      await when("b", (t) => {
+        seen.push(vars.n, t.vars.n);
+      });
+      await then("c");
+    });
+    await takeDefinedCases();
+    await def.run(runCase(def).ctx.t);
+    assert.deepEqual(seen, [2, 2]);
+  });
+
   it("check compara en profundidad y guarda esperado y actual; ensure detiene el caso", async () => {
     let after = false;
-    const def = defineCase(() => {
-      id("UC-03");
-      title("x");
-      given("a", () => {
+    let siguiente = false;
+    const def = await defineCase(async () => {
+      await id("UC-03");
+      await title("x");
+      await given("a", () => {
         assert.equal(check("objetos iguales", { a: [1, 2] }, { a: [1, 2] }), true);
         assert.equal(check("distintos", { a: 1 }, { a: "1" }), false);
         ensure("falla", 1, 2);
         after = true;
       });
-      when("b");
-      then("c");
+      await when("b", () => {
+        siguiente = true;
+      });
+      await then("c");
     });
-    takeDefinedCases();
+    await takeDefinedCases();
     const r = runCase(def);
     await assert.rejects(def.run(r.ctx.t), (e: unknown) => e instanceof CaseAbort && /Falló una aserción obligatoria: falla/.test(e.message));
     assert.equal(after, false);
+    assert.equal(siguiente, false, "los pasos siguientes no corren");
     assert.deepEqual(r.checks.map((c) => [c.expression, c.passed]), [["objetos iguales", true], ["distintos", false], ["falla", false]]);
     assert.deepEqual([r.checks[1].expected, r.checks[1].actual], [{ a: "1" }, { a: 1 }]);
   });
 
   it("body: JSON parseado, texto si no es JSON, undefined si viene vacío", async () => {
     const api = defineService({ name: "api", endpoint: "https://api.example.com" });
-    const seen: unknown[] = [];
-    const def = defineCase(() => {
-      id("UC-04");
-      title("x");
-      given("a");
-      when("b", async () => {
-        for (const p of ["json", "texto", "vacío", "json-roto"]) seen.push((await api.get(p)).body);
+    const def = await defineCase(async () => {
+      await id("UC-04");
+      await title("x");
+      await given("a");
+      const seen = await when("b", async () => {
+        const out: unknown[] = [];
+        for (const p of ["json", "texto", "vacío", "json-roto"]) out.push((await api.get(p)).body);
+        return out;
       });
-      then("c");
+      await then("c", () => {
+        assert.deepEqual(seen, [{ ok: true }, "hola", undefined, "{roto"]);
+      });
     });
-    takeDefinedCases();
+    await takeDefinedCases();
     const r = runCase(def, (p) =>
       p === "json"
         ? { body: '{"ok":true}' }
@@ -265,21 +331,20 @@ describe("contexto de un caso", () => {
             : { body: "{roto" },
     );
     await def.run(r.ctx.t);
-    assert.deepEqual(seen, [{ ok: true }, "hola", undefined, "{roto"]);
   });
 
   it("un servicio que no está en el reporte da un error con los disponibles", async () => {
     const otro = defineService({ name: "pagos-no-existe", endpoint: "https://pagos.example.com" });
-    const def = defineCase(() => {
-      id("UC-05");
-      title("x");
-      given("a", async () => {
+    const def = await defineCase(async () => {
+      await id("UC-05");
+      await title("x");
+      await given("a", async () => {
         await otro.get("/");
       });
-      when("b");
-      then("c");
+      await when("b");
+      await then("c");
     });
-    takeDefinedCases();
+    await takeDefinedCases();
     const r = runCase(def);
     await assert.rejects(def.run(r.ctx.t), /El servicio "pagos-no-existe" no está en el reporte\. Servicios disponibles: api/);
   });
@@ -287,16 +352,16 @@ describe("contexto de un caso", () => {
   it("servicio.url() arma la URL por el proxy", async () => {
     const api = defineService({ name: "api", endpoint: "https://api.example.com" });
     let url = "";
-    const def = defineCase(() => {
-      id("UC-06");
-      title("x");
-      given("a", () => {
+    const def = await defineCase(async () => {
+      await id("UC-06");
+      await title("x");
+      await given("a", () => {
         url = api.url("/pedidos/1?x=1");
       });
-      when("b");
-      then("c");
+      await when("b");
+      await then("c");
     });
-    takeDefinedCases();
+    await takeDefinedCases();
     const r = runCase(def);
     await def.run(r.ctx.t);
     assert.equal(url, "http://localhost:18080/pedidos/1?x=1");
@@ -305,31 +370,31 @@ describe("contexto de un caso", () => {
 
 describe("notation", () => {
   it("devuelve el valor, normaliza la clave y acepta espacios, tildes y ñ", async () => {
-    const def = defineCase(() => {
-      id("UC-07");
-      title("x");
+    const def = await defineCase(async () => {
+      await id("UC-07");
+      await title("x");
       const v = notation("Time Alive", 42);
       assert.equal(v, 42);
       notation("dueño del recurso", "maria");
       notation("objeto", { a: 1 });
-      given("a");
-      when("b");
-      then("c");
+      await given("a");
+      await when("b");
+      await then("c");
     });
-    takeDefinedCases();
+    await takeDefinedCases();
     assert.deepEqual(def.annotations, { "time alive": 42, "dueño del recurso": "maria", objeto: '{"a":1}' });
+    await def.run(runCase(def).ctx.t); // al correr, la anotación del caso no vuelve a registrarse ni falla
   });
 
   for (const bad of ["", "con:dos-puntos", "-empieza", "x".repeat(65)]) {
-    it(`rechaza la clave ${JSON.stringify(bad.slice(0, 12))}`, () => {
-      assert.throws(
-        () =>
-          defineCase(() => {
-            notation(bad, 1);
-          }),
+    it(`rechaza la clave ${JSON.stringify(bad.slice(0, 12))}`, async () => {
+      await assert.rejects(
+        defineCase(async () => {
+          notation(bad, 1);
+        }),
         /el nombre usa letras/,
       );
-      takeDefinedCases();
+      await takeDefinedCases().catch(() => {});
     });
   }
 });
