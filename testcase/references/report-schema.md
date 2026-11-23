@@ -246,6 +246,8 @@ Campos de `process`:
 | `listen` | string | sí | Dirección local a la que se envían los requests, por ejemplo `http://localhost:18080`. |
 | `upstream` | string | sí | Servicio real al que se reenvían. |
 | `evidence` | string | no | HAR que escribe el proxy, relativo al reporte. |
+| `insecure` | `true` | no | El proxy no verifica el certificado del upstream https. Lo pone `run.ts --plan` para un endpoint local (`localhost`, `127.x`, `::1`) o con `tls: { insecure: true }` en `defineService`. |
+| `ca` | string | no | CA adicional (PEM, relativa a la raíz del proyecto) en la que confía el proxy al verificar el upstream, desde `tls: { ca }` en `defineService`. |
 
 ### Artifact
 
@@ -2060,6 +2062,14 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
         "evidence": {
           "type": "string",
           "description": "Archivo de evidencia que escribe el proxy, relativo al reporte."
+        },
+        "insecure": {
+          "const": true,
+          "description": "El proxy no verifica el certificado del upstream https (certificado propio de un servicio local)."
+        },
+        "ca": {
+          "type": "string",
+          "description": "CA adicional en PEM, relativa a la raíz del proyecto, en la que confía el proxy al verificar el upstream."
         }
       },
       "if": {

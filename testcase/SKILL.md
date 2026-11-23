@@ -115,7 +115,7 @@ La API completa:
 | `await title(texto)` · `await title(() => texto)` | Título del caso. Una vez por caso. |
 | `await id("UC-NN")` | Si el archivo tiene un solo caso, es opcional: el id sale del nombre (`UC-03.case.ts` → `UC-03`). Si tiene varios, cada caso declara el suyo. |
 | `await given(texto, fn?)` · `await when(…)` · `await then(…)` | Pasos. Corren en el orden en que se escriben y devuelven lo que devuelve `fn`: `const login = await given("…", async () => api.post(…))`. `fn` es opcional: `await given("un pedido de María")` deja el paso solo como texto. Sin `await`, o con un paso dentro de otro, el caso falla con un mensaje claro. Los requests, `check`, `ensure` y `page()` van dentro de un paso. |
-| `await defineService({ name, endpoint, … })` | Servicio URL que ya existe (`connected`). Campos: `endpoint`, `version?`, `health?`. |
+| `await defineService({ name, endpoint, … })` | Servicio URL que ya existe (`connected`). Campos: `endpoint`, `version?`, `health?`, `tls?` (`{ ca }` o `{ insecure }`: cómo verifica el proxy un certificado propio; ver abajo). |
 | `await defineService({ name, command, … })` | Proceso local (`process`): un comando de shell que corre en esta máquina, sin contenedor. Campos: `command`, `cwd?` (relativa a la raíz del proyecto), `port?` (donde escucha; con puerto habla HTTP y va por un proxy local), `env?`, `dependsOn?`, `artifacts?`, `health?` (`GET /ruta` lo corre `local.ts`), `http?`. Con `image` o `build`, `command` es el comando del contenedor, no un proceso local. |
 | `await defineService({ name, image \| build, … })` | Contenedor (`provisioned`). Campos: `image` o `build` (texto con el contexto, o `{ context, dockerfile?, args?, target? }`; rutas relativas a la raíz del proyecto), `command?`, `tmpfs?` (rutas en memoria), `ports?` (`{ container, host? }`; sin `host` se asigna uno desde 55000), `env?`, `dependsOn?` (nombres o servicios), `storage?`, `artifacts?` (`{ kind, source, description? }`), `health?`, `http?` (si habla HTTP, va por proxy). |
 | `fromEnv("VAR")` | Valor de `env` que sale del entorno del host. En la lista de servicios del reporte queda como `••••` con el nombre de la variable, y si la variable existe al correr, su valor se trata como `sensitive`. |
@@ -181,6 +181,15 @@ Levanta el compose y completa lo pendiente con datos reales:
 - Si un servicio no queda sano, no ejecutes los casos que dependen de él: deja `run.status: "error"` y explica a la persona qué falló.
 
 Un servicio `connected` ya existe: no lo levantes, no le cargues datos y no lo detengas. Solo su proxy es tuyo. Agrega `version` y `tls` si los conoces.
+
+El proxy verifica el certificado de un endpoint `https`. Si el certificado es propio (autofirmado o de una CA interna), el proxy responde 502 y explica la causa. Para un endpoint local (`localhost`, `*.localhost`, `127.x`, `::1`) `--plan` ya apaga la verificación (`proxy.insecure` en el reporte). Para otro host, decláralo en el servicio y vuelve a correr `--plan`:
+
+```ts
+await defineService({ name: "corp", endpoint: "https://api.corp.interno", tls: { ca: "./certs/ca.pem" } }); // confía en esa CA y sigue verificando: preferido
+await defineService({ name: "staging", endpoint: "https://staging.interno", tls: { insecure: true } });     // no verifica: solo para entornos de prueba
+```
+
+`tls: { insecure: false }` vuelve a verificar un endpoint local. No uses `insecure` con servicios de producción: el proxy aceptaría cualquier certificado.
 
 Todo servicio HTTP se prueba **a través de su proxy**. Nunca llames al servicio directamente. `run.ts` usa `proxy.listen` como URL base, y avisa si un servicio HTTP no tiene proxy.
 
