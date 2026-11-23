@@ -369,6 +369,15 @@ function bodyReal(b){
   return bodyView({...b, value:v});
 }
 const hdrRows = hs=>(hs||[]).map(h=>[h.name, h.value, h.sensitive?1:0, h.secretRef]);
+/** Línea de estado HTTP de la respuesta (HTTP/1.1 201 Created), o null si el request no es HTTP ni GraphQL. */
+function httpStatusLine(r){
+  const st = r.response.status;
+  const code = st.kind==="http" ? st.code : st.kind==="graphql" ? st.httpCode : null;
+  if(code==null) return null;
+  const reason = st.kind==="http" ? (st.reason||"") : String(st.label||"").split(" · ")[0].replace(/^\d+\s*/,"");
+  const version = (/HTTP\/[\d.]+/.exec(r.transport||"")||["HTTP/1.1"])[0];
+  return `${version} ${code}${reason?" "+reason:""}`;
+}
 
 const REQ = REPORT.requests.map(r=>{
   const res = r.response;
@@ -380,6 +389,7 @@ const REQ = REPORT.requests.map(r=>{
     size: res.sizeBytes!=null ? fmtBytes(res.sizeBytes) : res.frames ? res.frames.length+" frames" : res.status.kind==="sql" ? res.status.rowCount+(res.status.rowCount===1?" fila":" filas") : "—",
     ann:r.annotations||{}, line:r.handler.line, file:r.handler.file, services:r.services,
     status:{code:res.status.label, cls:statusCls(res.status)},
+    http: httpStatusLine(r),
     expected: r.assertions.some(a=>a.expectedFailure),
     reqH:hdrRows(r.request.headers), reqB:bodyView(r.request.body), reqBReal:bodyReal(r.request.body), reqRedactions:r.request.body.redactions||[],
     resH:hdrRows(res.headers), resB, resBReal, trailers: res.trailers ? hdrRows(res.trailers) : null,
@@ -597,6 +607,13 @@ function hdrTable(rows){
   return `<table class="hdr"><tbody>${rows.map(([k,v,m,ref])=>`<tr><td>${esc(k)}</td><td>${v==null?'<span class="note">—</span>':esc(m&&state.reveal&&SECRETS[ref]!=null?SECRETS[ref]:v)}${m?(state.reveal&&SECRETS[ref]!=null?'<span class="mask shown">sensible</span>':'<span class="mask">oculto</span>'):""}</td></tr>`).join("")}</tbody></table>`;
 }
 const view = (r,x)=>!state.reveal?x:x===r.reqB?r.reqBReal:x===r.resB?r.resBReal:x;
+/** Respuesta completa como mensaje HTTP: línea de estado, headers, línea en blanco y body. Respeta "Mostrar valores sensibles". */
+function httpResponse(r){
+  const hdr = r.resH.map(([k,v,m,ref])=>`${k}: ${m&&state.reveal&&SECRETS[ref]!=null?SECRETS[ref]:v??""}`);
+  const b = view(r,r.resB);
+  const body = b==null ? "" : typeof b==="string" ? b : JSON.stringify(b,null,2);
+  return [r.http, ...hdr].join("\n") + "\n\n" + body;
+}
 const ENV_HEADER = {TOKEN:"authorization", SERVICE_TOKEN:"x-service-token", PGPASSWORD:"password"};
 function reproduce(r){
   if(!r.rep) return "# testmania no generó un comando para este request";
@@ -622,7 +639,7 @@ function renderDetail(){
       <h4>${P.hdr} <em>${r.reqH.length} entradas</em></h4>${hdrTable(r.reqH)}
       <h4>${P.body} ${r.reqB!=null?'<button class="copy" data-copy="reqB">Copiar</button>':""}</h4><pre class="code">${hl(view(r,r.reqB))}</pre></div>`;
   const resPane = `<div class="d-sec" ${state.tab!=="res"?"hidden":""}>
-      <h4>Estado</h4><div class="mono status ${statusCls}">${esc(r.status.code)}${r.expected?' <span class="note" style="font-family:var(--f-body);font-weight:400">· esperado por la prueba</span>':""}</div>
+      <h4>Estado ${r.http?'<button class="copy" data-copy="resHttp" title="Estado, headers y body como mensaje HTTP">Copiar</button>':""}</h4><div class="mono status ${statusCls}">${esc(r.status.code)}${r.expected?' <span class="note" style="font-family:var(--f-body);font-weight:400">· esperado por la prueba</span>':""}</div>
       <h4>${P.rhdr} <em>${r.resH.length} entradas</em></h4>${hdrTable(r.resH)}
       ${r.trailers?`<h4>Trailers</h4>${hdrTable(r.trailers)}`:""}
       <h4>${P.rbody} ${r.resB!=null?'<button class="copy" data-copy="resB">Copiar</button>':""}</h4><pre class="code">${hl(view(r,r.resB))}</pre></div>`;
@@ -664,9 +681,15 @@ $("#detail").addEventListener("click",e=>{
   const t = e.target.closest("[data-tab]"); if(t){ state.tab=t.dataset.tab; renderDetail(); return; }
   const c = e.target.closest("[data-copy]"); if(!c) return;
   const r = REQ.find(x=>x.id===state.sel);
-  const raw = view(r,r[c.dataset.copy]); const v = c.dataset.copy==="rep" ? reproduce(r) : (typeof raw==="string"?raw:JSON.stringify(raw,null,2));
+  const raw = view(r,r[c.dataset.copy]); const v = c.dataset.copy==="rep" ? reproduce(r) : c.dataset.copy==="resHttp" ? httpResponse(r) : (typeof raw==="string"?raw:JSON.stringify(raw,null,2));
   const done = ()=>{c.textContent="Copiado";setTimeout(()=>c.textContent="Copiar",1400);};
-  const fallback = ()=>{const pre=c.closest("h4").nextElementSibling;const s=getSelection();const rg=document.createRange();rg.selectNodeContents(pre);s.removeAllRanges();s.addRange(rg);c.textContent="Seleccionado";};
+  const fallback = ()=>{
+    if(c.dataset.copy==="resHttp"){ // el mensaje no está en pantalla tal cual: se copia desde un textarea temporal
+      const ta=document.createElement("textarea"); ta.value=v; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.select();
+      let ok=false; try{ ok=document.execCommand("copy"); }catch(_){}
+      ta.remove(); c.textContent=ok?"Copiado":"No se pudo copiar"; setTimeout(()=>c.textContent="Copiar",1400); return;
+    }
+    const pre=c.closest("h4").nextElementSibling;const s=getSelection();const rg=document.createRange();rg.selectNodeContents(pre);s.removeAllRanges();s.addRange(rg);c.textContent="Seleccionado";};
   try{ navigator.clipboard.writeText(v).then(done,fallback); }catch(_){ fallback(); }
 });
 
