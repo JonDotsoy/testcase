@@ -55,6 +55,8 @@ const reportDir = dirname(reportPath);
 const report = JSON.parse(readFileSync(reportPath, "utf8"));
 const here = dirname(new URL(import.meta.url).pathname);
 const casesDir = join(here, "cases");
+// Raíz del proyecto (la carpeta que contiene .testcase/): fromEnvFile() resuelve sus rutas desde aquí
+process.env.TESTCASE_PROJECT_ROOT = dirname(reportDir);
 
 // Casos
 const files = existsSync(casesDir) ? readdirSync(casesDir).filter((f) => f.endsWith(".case.ts")).sort() : [];
@@ -120,7 +122,11 @@ const nextPort = (from: number) => {
 const isHttp = isHttpService;
 const envEntries = (env: Record<string, any> | undefined) =>
   Object.entries(env ?? {}).map(([name, v]) =>
-    typeof v === "string" ? { name, source: "manifest", value: v } : { name, source: "manifest", value: "••••", sensitive: true, fromEnv: v.fromEnv },
+    typeof v === "string"
+      ? { name, source: "manifest", value: v }
+      : v.envFile
+        ? { name, source: "env-file", value: "••••", sensitive: true, envFile: v.envFile }
+        : { name, source: "manifest", value: "••••", sensitive: true, fromEnv: v.fromEnv },
   );
 for (const d of declared) {
   const kind = serviceKind(d);
@@ -286,7 +292,10 @@ if (plan) {
       svc.container_name = `tc-${c.name}`;
       if (c.command) svc.command = c.command;
       if (s.ports.length) svc.ports = s.ports.map((p: any) => `${p.host}:${p.container}${p.protocol && p.protocol !== "tcp" ? "/" + p.protocol : ""}`);
-      const env = Object.entries(c.env ?? {});
+      // Las variables de fromEnvFile van por env_file: compose las lee del archivo al levantar
+      const envFiles = [...new Set(Object.values(c.env ?? {}).flatMap((v) => (typeof v === "object" && v.envFile ? [v.envFile] : [])))];
+      if (envFiles.length) svc.env_file = envFiles.map((f) => relative(reportDir, resolve(projectRoot, f)));
+      const env = Object.entries(c.env ?? {}).filter(([, v]) => !(typeof v === "object" && v.envFile));
       if (env.length) {
         svc.environment = Object.fromEntries(
           env.map(([k, v]) => {
@@ -311,6 +320,7 @@ if (plan) {
       const env = Object.fromEntries(
         Object.entries(p.env ?? {}).map(([k, v]) => {
           if (typeof v === "string") return [k, v];
+          if (v.envFile) return [k, { fromEnv: v.fromEnv, envFile: v.envFile }];
           envVars.add(v.fromEnv);
           return [k, { fromEnv: v.fromEnv }];
         }),

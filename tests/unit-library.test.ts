@@ -19,6 +19,7 @@ import {
   encodeHeaderJson,
   ensure,
   fromEnv,
+  parseEnvFile,
   given,
   id,
   maskSensitive,
@@ -558,6 +559,13 @@ describe("sensitive", () => {
     sensitive("tok-largo-1234");
     sensitive("tok-largo-1234-extra");
     assert.equal(maskSensitive("x tok-largo-1234-extra y"), "x •••• y");
+  });
+
+  it("parseEnvFile lee comentarios, export, comillas y comentarios al final", () => {
+    assert.deepEqual(
+      parseEnvFile(['# comentario', '', 'export A=1', 'B = "dos\\npartes" # nota', "C='con # dentro'", "D=sin comillas # nota", "E=", "no es variable"].join("\n")),
+      { A: "1", B: "dos\npartes", C: "con # dentro", D: "sin comillas", E: "" },
+    );
   });
 
   it("fromEnv registra el valor de la variable si existe", () => {
