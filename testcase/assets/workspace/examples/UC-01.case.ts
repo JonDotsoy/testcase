@@ -3,10 +3,10 @@
 import { defineCase, defineService, fromEnv, sensitive, title, given, when, then, notation, check, ensure, page } from "../testcase.ts";
 
 // Servicio URL que ya existe: sus requests pasan por el proxy de evidencia.
-const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
+const api = await defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
 
 // Contenedor que se levanta con Podman, con sus migraciones y seeds.
-const db = defineService({
+const db = await defineService({
   name: "postgres",
   image: "docker.io/library/postgres:16.4-alpine",
   ports: [{ container: 5432 }],
@@ -20,7 +20,7 @@ const db = defineService({
 });
 
 // Contenedor construido desde un Dockerfile del proyecto (las rutas son relativas a la raíz del proyecto).
-const pedidos = defineService({
+const pedidos = await defineService({
   name: "pedidos-svc",
   build: { context: "./services/pedidos", dockerfile: "Dockerfile" },
   ports: [{ container: 8080 }],

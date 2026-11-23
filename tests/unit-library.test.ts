@@ -148,7 +148,7 @@ describe("defineCase", () => {
 describe("contexto de un caso", () => {
   it("corre los pasos en orden, devuelve sus valores, manda los headers x-testcase-* y lee el body como JSON", async () => {
     const order: string[] = [];
-    const api = defineService({ name: "api", endpoint: "https://api.example.com" });
+    const api = await defineService({ name: "api", endpoint: "https://api.example.com" });
     const def = await defineCase(async () => {
       await id("UC-01");
       await title("x");
@@ -219,7 +219,7 @@ describe("contexto de un caso", () => {
   });
 
   it("une check y notation al request correcto", async () => {
-    const api = defineService({ name: "api", endpoint: "https://api.example.com" });
+    const api = await defineService({ name: "api", endpoint: "https://api.example.com" });
     const def = await defineCase(async () => {
       await id("UC-02");
       await title("x");
@@ -306,7 +306,7 @@ describe("contexto de un caso", () => {
   });
 
   it("body: JSON parseado, texto si no es JSON, undefined si viene vacío", async () => {
-    const api = defineService({ name: "api", endpoint: "https://api.example.com" });
+    const api = await defineService({ name: "api", endpoint: "https://api.example.com" });
     const def = await defineCase(async () => {
       await id("UC-04");
       await title("x");
@@ -334,7 +334,7 @@ describe("contexto de un caso", () => {
   });
 
   it("un servicio que no está en el reporte da un error con los disponibles", async () => {
-    const otro = defineService({ name: "pagos-no-existe", endpoint: "https://pagos.example.com" });
+    const otro = await defineService({ name: "pagos-no-existe", endpoint: "https://pagos.example.com" });
     const def = await defineCase(async () => {
       await id("UC-05");
       await title("x");
@@ -350,7 +350,7 @@ describe("contexto de un caso", () => {
   });
 
   it("servicio.url() arma la URL por el proxy", async () => {
-    const api = defineService({ name: "api", endpoint: "https://api.example.com" });
+    const api = await defineService({ name: "api", endpoint: "https://api.example.com" });
     let url = "";
     const def = await defineCase(async () => {
       await id("UC-06");
@@ -426,44 +426,52 @@ describe("sensitive", () => {
 });
 
 describe("defineService", () => {
-  it("declara servicios conectados y contenedores (image o build)", () => {
-    defineService({ name: "svc-url", endpoint: "https://svc.example.com" });
-    defineService({ name: "svc-img", image: "docker.io/library/postgres:16.4-alpine", ports: [{ container: 5432 }] });
-    defineService({ name: "svc-build", build: "./services/x", ports: [{ container: 8080 }], http: true });
+  it("declara servicios conectados y contenedores (image o build)", async () => {
+    await defineService({ name: "svc-url", endpoint: "https://svc.example.com" });
+    await defineService({ name: "svc-img", image: "docker.io/library/postgres:16.4-alpine", ports: [{ container: 5432 }] });
+    await defineService({ name: "svc-build", build: "./services/x", ports: [{ container: 8080 }], http: true });
     const names = declaredServices().map((s) => s.name);
     for (const n of ["svc-url", "svc-img", "svc-build"]) assert.ok(names.includes(n), n);
   });
 
-  it("acepta la misma definición dos veces (dos scripts autocontenidos)", () => {
-    const db = defineService({ name: "svc-dup", image: "img:1" });
-    defineService({ name: "svc-dup", image: "img:1" });
-    defineService({ name: "svc-dep", image: "img:2", dependsOn: [db] });
-    defineService({ name: "svc-dep", image: "img:2", dependsOn: ["svc-dup"] });
+  it("acepta la misma definición dos veces (dos scripts autocontenidos)", async () => {
+    const db = await defineService({ name: "svc-dup", image: "img:1" });
+    await defineService({ name: "svc-dup", image: "img:1" });
+    await defineService({ name: "svc-dep", image: "img:2", dependsOn: [db] });
+    await defineService({ name: "svc-dep", image: "img:2", dependsOn: ["svc-dup"] });
   });
 
-  it("rechaza definiciones distintas con el mismo nombre", () => {
-    defineService({ name: "svc-conf", endpoint: "https://a.example.com" });
-    assert.throws(() => defineService({ name: "svc-conf", endpoint: "https://b.example.com" }), /declarado dos veces con definiciones distintas/);
+  it("rechaza definiciones distintas con el mismo nombre", async () => {
+    await defineService({ name: "svc-conf", endpoint: "https://a.example.com" });
+    await assert.rejects(defineService({ name: "svc-conf", endpoint: "https://b.example.com" }), /declarado dos veces con definiciones distintas/);
   });
 
-  it("declara procesos locales con comando, cwd y puerto", () => {
-    const web = defineService({ name: "svc-proc", command: "bun run dev", cwd: "./apps/web", port: 3000 });
+  it("declara procesos locales con comando, cwd y puerto", async () => {
+    const web = await defineService({ name: "svc-proc", command: "bun run dev", cwd: "./apps/web", port: 3000 });
     assert.equal(serviceKind(web.definition), "process");
     assert.equal(isHttpService(web.definition), true, "con puerto habla HTTP");
-    const worker = defineService({ name: "svc-worker", command: "node worker.js" });
+    const worker = await defineService({ name: "svc-worker", command: "node worker.js" });
     assert.equal(isHttpService(worker.definition), false);
     assert.equal(serviceKind({ name: "x", image: "img", command: "run" }), "provisioned", "command con image es el comando del contenedor");
     assert.equal(serviceKind({ name: "x", endpoint: "https://x.example.com" }), "connected");
-    assert.throws(() => defineService({ name: "svc-bad-port", command: "x", port: 70000 }), /port debe ser un entero/);
-    assert.throws(() => defineService({ name: "svc-http-no-port", command: "x", http: true }), /un proceso http necesita port/);
+    await assert.rejects(defineService({ name: "svc-bad-port", command: "x", port: 70000 }), /port debe ser un entero/);
+    await assert.rejects(defineService({ name: "svc-http-no-port", command: "x", http: true }), /un proceso http necesita port/);
   });
 
-  it("exige endpoint, image/build o command, solo uno", () => {
-    assert.throws(() => defineService({ name: "nada" } as any), /declara endpoint/);
-    assert.throws(() => defineService({ name: "vacío", command: "  " } as any), /declara endpoint/);
-    assert.throws(() => defineService({ name: "ambos", endpoint: "https://x.example.com", image: "x" } as any), /declara endpoint/);
-    assert.throws(() => defineService({ name: "url-y-comando", endpoint: "https://x.example.com", command: "x" } as any), /declara endpoint/);
-    assert.throws(() => defineService({} as any), /necesita un name/);
+  it("exige endpoint, image/build o command, solo uno", async () => {
+    await assert.rejects(defineService({ name: "nada" } as any), /declara endpoint/);
+    await assert.rejects(defineService({ name: "vacío", command: "  " } as any), /declara endpoint/);
+    await assert.rejects(defineService({ name: "ambos", endpoint: "https://x.example.com", image: "x" } as any), /declara endpoint/);
+    await assert.rejects(defineService({ name: "url-y-comando", endpoint: "https://x.example.com", command: "x" } as any), /declara endpoint/);
+    await assert.rejects(defineService({} as any), /necesita un name/);
+  });
+
+  it("se usa con await: sin await, takeDefinedCases() informa el error", async () => {
+    await takeDefinedCases().catch(() => {}); // descarta las promesas rechazadas de las pruebas anteriores
+    const p = defineService({ name: "svc-sin-await" } as any);
+    assert.ok(p instanceof Promise);
+    await assert.rejects(takeDefinedCases(), /"svc-sin-await".*declara endpoint/);
+    assert.deepEqual(await takeDefinedCases(), [], "el error no queda pendiente");
   });
 });
 

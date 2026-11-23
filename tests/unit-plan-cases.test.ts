@@ -126,18 +126,18 @@ describe("run.ts: carga de los casos", () => {
   it("un error al importar el script", () => expectError({ "UC-01.case.ts": `throw new Error("roto al cargar");\n` }, /UC-01\.case\.ts: roto al cargar/));
   it("una dependencia que no está declarada", () =>
     expectError(
-      { "UC-01.case.ts": withServices(`defineService({ name: "app", image: "x:1", dependsOn: ["db"] });`) },
+      { "UC-01.case.ts": withServices(`await defineService({ name: "app", image: "x:1", dependsOn: ["db"] });`) },
       /"app" depende de "db", que no está declarado/,
     ));
   it("un nombre que no sirve en compose", () =>
-    expectError({ "UC-01.case.ts": withServices(`defineService({ name: "Mi API", endpoint: "https://x.example.com" });`) }, /"Mi API" no sirve como servicio de compose/));
+    expectError({ "UC-01.case.ts": withServices(`await defineService({ name: "Mi API", endpoint: "https://x.example.com" });`) }, /"Mi API" no sirve como servicio de compose/));
   it("un servicio http sin puertos", () =>
-    expectError({ "UC-01.case.ts": withServices(`defineService({ name: "app", image: "x:1", http: true });`) }, /"app" es http pero no declara ports/));
+    expectError({ "UC-01.case.ts": withServices(`await defineService({ name: "app", image: "x:1", http: true });`) }, /"app" es http pero no declara ports/));
   it("definiciones distintas del mismo servicio en dos scripts", () =>
     expectError(
       {
-        "UC-01.case.ts": withServices(`defineService({ name: "api", endpoint: "https://a.example.com" });`),
-        "UC-02.case.ts": withServices(`defineService({ name: "api", endpoint: "https://b.example.com" });`),
+        "UC-01.case.ts": withServices(`await defineService({ name: "api", endpoint: "https://a.example.com" });`),
+        "UC-02.case.ts": withServices(`await defineService({ name: "api", endpoint: "https://b.example.com" });`),
       },
       /declarado dos veces con definiciones distintas/,
     ));
@@ -219,7 +219,7 @@ describe("run.ts --plan", () => {
 
   it("escapa $ en los valores literales y marca los tmpfs sin ruta como pendientes", () => {
     const p = project({
-      "UC-01.case.ts": withServices(`defineService({ name: "cache", image: "redis:7", env: { PASS: "a$b" }, storage: "tmpfs" });`),
+      "UC-01.case.ts": withServices(`await defineService({ name: "cache", image: "redis:7", env: { PASS: "a$b" }, storage: "tmpfs" });`),
     });
     try {
       const r = p.cases(["--plan"]);

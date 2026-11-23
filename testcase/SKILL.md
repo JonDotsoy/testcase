@@ -55,10 +55,10 @@ Los casos van en `.testcase/cases/*.case.ts`: un archivo por caso (`UC-NN.case.t
 import { defineCase, defineService, fromEnv, sensitive, title, given, when, then, notation, check, ensure, page } from "../testcase.ts";
 
 // Servicio URL que ya existe: sus requests pasan por el proxy de evidencia.
-const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
+const api = await defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
 
 // Contenedor que se levanta con Podman, con sus migraciones y seeds.
-const db = defineService({
+const db = await defineService({
   name: "postgres",
   image: "docker.io/library/postgres:16.4-alpine",
   ports: [{ container: 5432 }],
@@ -69,9 +69,9 @@ const db = defineService({
 });
 
 // Proceso local: un comando de shell en su carpeta, sin contenedor. Con port, habla HTTP y tiene proxy local.
-const web = defineService({ name: "web", command: "bun run dev", cwd: "./apps/web", port: 3000, dependsOn: [db], health: "GET /healthz" });
+const web = await defineService({ name: "web", command: "bun run dev", cwd: "./apps/web", port: 3000, dependsOn: [db], health: "GET /healthz" });
 
-// Todo se usa con await: defineCase, title, id, given, when y then.
+// Todo se usa con await: defineService, defineCase, title, id, given, when y then.
 await defineCase(async () => {
   await title(() => "Cliente no puede cancelar un pedido ajeno");
   notation("tenant", "tienda-norte");                 // anotación de todo el caso
@@ -112,9 +112,9 @@ La API completa:
 | `await title(texto)` · `await title(() => texto)` | Título del caso. Una vez por caso. |
 | `await id("UC-NN")` | Si el archivo tiene un solo caso, es opcional: el id sale del nombre (`UC-03.case.ts` → `UC-03`). Si tiene varios, cada caso declara el suyo. |
 | `await given(texto, fn?)` · `await when(…)` · `await then(…)` | Pasos. Corren en el orden en que se escriben y devuelven lo que devuelve `fn`: `const login = await given("…", async () => api.post(…))`. `fn` es opcional: `await given("un pedido de María")` deja el paso solo como texto. Sin `await`, o con un paso dentro de otro, el caso falla con un mensaje claro. Los requests, `check`, `ensure` y `page()` van dentro de un paso. |
-| `defineService({ name, endpoint, … })` | Servicio URL que ya existe (`connected`). Campos: `endpoint`, `version?`, `health?`. |
-| `defineService({ name, command, … })` | Proceso local (`process`): un comando de shell que corre en esta máquina, sin contenedor. Campos: `command`, `cwd?` (relativa a la raíz del proyecto), `port?` (donde escucha; con puerto habla HTTP y va por un proxy local), `env?`, `dependsOn?`, `artifacts?`, `health?` (`GET /ruta` lo corre `local.ts`), `http?`. Con `image` o `build`, `command` es el comando del contenedor, no un proceso local. |
-| `defineService({ name, image \| build, … })` | Contenedor (`provisioned`). Campos: `image` o `build` (texto con el contexto, o `{ context, dockerfile?, args?, target? }`; rutas relativas a la raíz del proyecto), `command?`, `tmpfs?` (rutas en memoria), `ports?` (`{ container, host? }`; sin `host` se asigna uno desde 55000), `env?`, `dependsOn?` (nombres o servicios), `storage?`, `artifacts?` (`{ kind, source, description? }`), `health?`, `http?` (si habla HTTP, va por proxy). |
+| `await defineService({ name, endpoint, … })` | Servicio URL que ya existe (`connected`). Campos: `endpoint`, `version?`, `health?`. |
+| `await defineService({ name, command, … })` | Proceso local (`process`): un comando de shell que corre en esta máquina, sin contenedor. Campos: `command`, `cwd?` (relativa a la raíz del proyecto), `port?` (donde escucha; con puerto habla HTTP y va por un proxy local), `env?`, `dependsOn?`, `artifacts?`, `health?` (`GET /ruta` lo corre `local.ts`), `http?`. Con `image` o `build`, `command` es el comando del contenedor, no un proceso local. |
+| `await defineService({ name, image \| build, … })` | Contenedor (`provisioned`). Campos: `image` o `build` (texto con el contexto, o `{ context, dockerfile?, args?, target? }`; rutas relativas a la raíz del proyecto), `command?`, `tmpfs?` (rutas en memoria), `ports?` (`{ container, host? }`; sin `host` se asigna uno desde 55000), `env?`, `dependsOn?` (nombres o servicios), `storage?`, `artifacts?` (`{ kind, source, description? }`), `health?`, `http?` (si habla HTTP, va por proxy). |
 | `fromEnv("VAR")` | Valor de `env` que sale del entorno del host. En la lista de servicios del reporte queda como `••••` con el nombre de la variable, y si la variable existe al correr, su valor se trata como `sensitive`. |
 | `sensitive(valor)` | Declara un valor o texto sensible y lo devuelve tal cual: `const password = sensitive(process.env.PEDRO_PASSWORD)`. El caso usa el valor real y `report.json` lo conserva (en `secrets`); el HTML lo oculta como `••••` donde aparezca (URL, headers, bodies, anotaciones, aserciones) hasta que se pulsa "Mostrar valores sensibles". Va en el módulo, en `defineCase` o en un paso, por ejemplo `sensitive(login.body.access_token)`. Valores de menos de 4 caracteres no se registran. |
 | `servicio.get/post/put/patch/delete/fetch(ruta, opts)` | Request HTTP (Playwright) por el proxy del servicio, con `data`, `form`, `params`, `headers`. Devuelve `body` (el JSON ya parseado, o el texto), `status()` y `headers()`. |

@@ -158,8 +158,8 @@ describe("local.ts con un proceso local", () => {
     p = project({
       "UC-01.case.ts": caseSource(
         caseBody,
-        `defineService({ name: "web", command: "node server.mjs", cwd: "./app", port: ${webPort}, env: { SALUDO: "hola $USER", CLAVE: fromEnv("TC_CLAVE") }, health: "GET /healthz" });
-defineService({ name: "worker", command: "node -e \\"setInterval(() => {}, 1000); console.log('worker listo')\\"", dependsOn: ["web"] });`,
+        `await defineService({ name: "web", command: "node server.mjs", cwd: "./app", port: ${webPort}, env: { SALUDO: "hola $USER", CLAVE: fromEnv("TC_CLAVE") }, health: "GET /healthz" });
+await defineService({ name: "worker", command: "node -e \\"setInterval(() => {}, 1000); console.log('worker listo')\\"", dependsOn: ["web"] });`,
       ),
     });
     const { mkdirSync } = await import("node:fs");
@@ -296,7 +296,7 @@ describe("local.ts: fallos al levantar", () => {
 
   it("un proceso que termina antes de estar listo muestra su salida y no deja nada corriendo", async () => {
     const port = await freePort();
-    await withProcess(`defineService({ name: "roto", command: "echo 'falta la config' >&2; exit 3", port: ${port} });`, (p) => {
+    await withProcess(`await defineService({ name: "roto", command: "echo 'falta la config' >&2; exit 3", port: ${port} });`, (p) => {
       const r = runScript(LOCAL, ["up", "--report", p.reportFile]);
       assert.equal(r.code, 1);
       assert.match(r.stderr, /roto terminó antes de estar listo/);
@@ -307,7 +307,7 @@ describe("local.ts: fallos al levantar", () => {
 
   it("un puerto que no abre a tiempo detiene el proceso", async () => {
     const port = await freePort();
-    await withProcess(`defineService({ name: "lento", command: "sleep 30", port: ${port} });`, (p) => {
+    await withProcess(`await defineService({ name: "lento", command: "sleep 30", port: ${port} });`, (p) => {
       const r = runScript(LOCAL, ["up", "--report", p.reportFile, "--timeout", "1"]);
       assert.equal(r.code, 1);
       assert.match(r.stderr, new RegExp(`lento no abrió el puerto ${port} en 1 s`));
@@ -333,10 +333,10 @@ describe("run.ts --plan --proxy local", () => {
     const p = project({
       "UC-01.case.ts": caseSource(
         caseBody,
-        `defineService({ name: "api", endpoint: "https://api.example.com/v2" });
-defineService({ name: "db", image: "postgres:16", ports: [{ container: 5432 }] });
-defineService({ name: "svc", image: "svc:1", ports: [{ container: 8080 }], http: true, dependsOn: ["db"] });
-defineService({ name: "web", command: "bun run dev", port: 3999, dependsOn: ["svc"] });`,
+        `await defineService({ name: "api", endpoint: "https://api.example.com/v2" });
+await defineService({ name: "db", image: "postgres:16", ports: [{ container: 5432 }] });
+await defineService({ name: "svc", image: "svc:1", ports: [{ container: 8080 }], http: true, dependsOn: ["db"] });
+await defineService({ name: "web", command: "bun run dev", port: 3999, dependsOn: ["svc"] });`,
       ),
     });
     try {
@@ -371,7 +371,7 @@ defineService({ name: "web", command: "bun run dev", port: 3999, dependsOn: ["sv
 
   it("rechaza un contenedor que depende de un proceso local y un --proxy desconocido", () => {
     const p = project({
-      "UC-01.case.ts": caseSource(caseBody, `defineService({ name: "web", command: "x", port: 3000 });\ndefineService({ name: "svc", image: "svc:1", dependsOn: ["web"] });`),
+      "UC-01.case.ts": caseSource(caseBody, `await defineService({ name: "web", command: "x", port: 3000 });\nawait defineService({ name: "svc", image: "svc:1", dependsOn: ["web"] });`),
     });
     try {
       const r = p.cases(["--plan"]);

@@ -6,7 +6,7 @@
  *
  *   import { defineCase, defineService, title, given, when, then, check } from "../testcase.ts";
  *
- *   const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
+ *   const api = await defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
  *
  *   await defineCase(async () => {
  *     await title("Cliente no puede cancelar un pedido ajeno");
@@ -161,7 +161,7 @@ const pendingCases: Promise<unknown>[] = [];
 
 /**
  * Casos definidos desde la última llamada, en orden. Lo usa run.ts después de importar cada archivo.
- * Espera a los defineCase que el archivo no esperó con await, y falla si alguno falló.
+ * Espera a los defineCase y defineService que el archivo no esperó con await, y falla si alguno falló.
  */
 export async function takeDefinedCases(): Promise<CaseDefinition[]> {
   const pending = pendingCases.splice(0);
@@ -393,12 +393,21 @@ export function declaredServices(): ServiceDefinition[] {
 /**
  * Declara un servicio que usa el caso. Va en el mismo script (o en un módulo que el script importa).
  *
- *   const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
- *   const db = defineService({ name: "postgres", image: "docker.io/library/postgres:16.4-alpine", ports: [{ container: 5432 }] });
- *   const svc = defineService({ name: "pedidos-svc", build: "./services/pedidos", ports: [{ container: 8080 }], dependsOn: [db], http: true });
- *   const web = defineService({ name: "web", command: "bun run dev", cwd: "./apps/web", port: 3000 });
+ * Se usa con await, igual que defineCase(); devuelve el servicio:
+ *
+ *   const api = await defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
+ *   const db = await defineService({ name: "postgres", image: "docker.io/library/postgres:16.4-alpine", ports: [{ container: 5432 }] });
+ *   const svc = await defineService({ name: "pedidos-svc", build: "./services/pedidos", ports: [{ container: 8080 }], dependsOn: [db], http: true });
+ *   const web = await defineService({ name: "web", command: "bun run dev", cwd: "./apps/web", port: 3000 });
  */
-export function defineService(def: ServiceDefinition): Service {
+export function defineService(def: ServiceDefinition): Promise<Service> {
+  const p = (async () => registerService(def))();
+  p.catch(() => {}); // run.ts lo informa desde takeDefinedCases(), aunque el archivo no use await
+  pendingCases.push(p);
+  return p;
+}
+
+function registerService(def: ServiceDefinition): Service {
   if (!def?.name) throw new Error("defineService() necesita un name.");
   const isConnected = "endpoint" in def && !!def.endpoint;
   const isProvisioned = ("image" in def && !!def.image) || ("build" in def && !!def.build);

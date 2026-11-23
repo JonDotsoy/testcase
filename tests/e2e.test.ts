@@ -95,7 +95,7 @@ describe("flujo completo", { skip: chromiumError ?? false, timeout: 300_000 }, (
     await new Promise((ok) => probe.close(ok));
 
     const header = `import { defineCase, defineService, sensitive, id, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";
-export const api = defineService({ name: "api", endpoint: "http://127.0.0.1:${apiPort}", health: "GET /healthz" });
+export const api = await defineService({ name: "api", endpoint: "http://127.0.0.1:${apiPort}", health: "GET /healthz" });
 `;
     p = project({
       "UC-01.case.ts": `${header}
