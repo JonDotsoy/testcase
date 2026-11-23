@@ -215,7 +215,7 @@ async function up() {
 
   for (const p of plan.proxies) {
     const log = join(reportDir, p.log);
-    const pid = start(process.execPath, [...tsRuntimeArgs(), join(here, "proxy.ts"), "--upstream", p.upstream, "--listen", String(p.port), "--har", join(reportDir, p.har)], {
+    const pid = start(process.execPath, [...tsRuntimeArgs(), join(here, "proxy.ts"), "--upstream", p.upstream, "--listen", String(p.port), "--har", join(reportDir, p.har), ...(p.insecure ? ["--insecure"] : []), ...(p.ca ? ["--ca", resolve(projectRoot, p.ca)] : [])], {
       cwd: reportDir,
       env: process.env,
       log,

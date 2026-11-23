@@ -356,6 +356,24 @@ interface ServiceBase {
 export interface ConnectedServiceDefinition extends ServiceBase {
   endpoint: string;
   version?: string;
+  /** Cómo verifica el proxy el certificado de un endpoint https. Ver {@link TlsDefinition}. */
+  tls?: TlsDefinition;
+}
+
+/**
+ * Verificación del certificado del servicio por el proxy de evidencia (solo endpoints https).
+ *
+ * Por defecto el proxy verifica el certificado, salvo que el endpoint sea local (`localhost`, `*.localhost`,
+ * `127.0.0.0/8` o `::1`): ahí los certificados autofirmados son lo normal y nadie puede interceptar el tráfico.
+ */
+export interface TlsDefinition {
+  /**
+   * `true`: el proxy no verifica el certificado (autofirmado, vencido o de otro host). `false`: lo verifica aunque
+   * el endpoint sea local. Si no se indica, se decide por el host.
+   */
+  insecure?: boolean;
+  /** Archivo PEM con la CA que firmó el certificado, relativo a la raíz del proyecto. El proxy confía en ella y sigue verificando. */
+  ca?: string;
 }
 
 /** Cómo construir la imagen. Un texto es el contexto; las rutas son relativas a la raíz del proyecto. */
@@ -458,6 +476,13 @@ function registerService(def: ServiceDefinition): Service {
   const isProcess = !isConnected && !isProvisioned && "command" in def && typeof def.command === "string" && def.command.trim() !== "";
   if ([isConnected, isProvisioned, isProcess].filter(Boolean).length !== 1 || (isConnected && (isProvisioned || "command" in def))) {
     throw new Error(`defineService("${def.name}"): declara endpoint (servicio conectado), image/build (contenedor) o command (proceso local), solo uno.`);
+  }
+  if ("tls" in def && def.tls != null) {
+    if (!isConnected) throw new Error(`defineService("${def.name}"): tls solo aplica a servicios conectados (endpoint https).`);
+    const tls = def.tls as TlsDefinition;
+    if (tls.insecure != null && typeof tls.insecure !== "boolean") throw new Error(`defineService("${def.name}"): tls.insecure debe ser true o false.`);
+    if (tls.ca != null && (typeof tls.ca !== "string" || !tls.ca.trim())) throw new Error(`defineService("${def.name}"): tls.ca debe ser la ruta a un archivo PEM.`);
+    if (tls.insecure && tls.ca) throw new Error(`defineService("${def.name}"): usa tls.insecure o tls.ca, no los dos.`);
   }
   if (isProcess) {
     const port = (def as ProcessServiceDefinition).port;

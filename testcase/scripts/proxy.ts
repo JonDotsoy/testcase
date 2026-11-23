@@ -14,12 +14,18 @@
  *   --har        Archivo HAR. Se reescribe después de cada request y al detenerse (SIGTERM o SIGINT),
  *                así que la evidencia no se pierde si el proceso muere.
  *   --insecure   No verifica el certificado del upstream (servicios locales con certificado propio).
+ *   --ca         Archivo PEM con una CA adicional en la que confiar (además de las del sistema). Sigue verificando
+ *                el certificado y el nombre del host; es la opción segura para una CA interna o de desarrollo.
+ *
+ * Sin --insecure ni --ca un certificado inválido responde 502 con la causa. run.ts --plan pone --insecure solo
+ * a los endpoints locales (localhost, 127.x, ::1) o si el servicio declara tls: { insecure: true }.
  *
  * Normalmente lo levanta scripts/local.ts. Corre con Node 22.6 o superior, o con bun. Sin dependencias.
  */
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer, request as httpRequest, type IncomingMessage, type OutgoingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { rootCertificates as tlsRootCertificates } from "node:tls";
 import type { AddressInfo } from "node:net";
 import { dirname, resolve } from "node:path";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
@@ -33,7 +39,7 @@ const upstreamArg = flag("--upstream");
 const listenArg = flag("--listen");
 const harArg = flag("--har");
 if (!upstreamArg || listenArg == null || !harArg) {
-  console.log("Uso: node proxy.ts --upstream <url> --listen <puerto> --har <archivo.har> [--insecure]");
+  console.log("Uso: node proxy.ts --upstream <url> --listen <puerto> --har <archivo.har> [--insecure | --ca <ca.pem>]");
   process.exit(1);
 }
 const upstream = new URL(upstreamArg);
@@ -42,6 +48,21 @@ if (!/^https?:$/.test(upstream.protocol)) {
   process.exit(1);
 }
 const insecure = args.includes("--insecure");
+const caArg = flag("--ca");
+let ca: Buffer[] | undefined;
+if (caArg) {
+  try {
+    // Se suma a las CA del sistema: un upstream con certificado público sigue funcionando.
+    ca = [readFileSync(resolve(caArg)), ...tlsRootCertificates.map((c) => Buffer.from(c))];
+  } catch (e) {
+    console.error(`proxy: no pude leer la CA ${caArg}: ${(e as Error).message}`);
+    process.exit(1);
+  }
+}
+const tlsOptions = insecure ? { rejectUnauthorized: false } : ca ? { ca } : {};
+
+/** Errores de verificación del certificado del upstream (Node los nombra con estos códigos). */
+const CERT_ERROR = /^(DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT(_LOCALLY)?|CERT_HAS_EXPIRED|CERT_NOT_YET_VALID|ERR_TLS_CERT_ALTNAME_INVALID|CERT_UNTRUSTED|CERT_REJECTED|CERT_SIGNATURE_FAILURE|INVALID_CA)$/;
 const harFile = resolve(harArg);
 mkdirSync(dirname(harFile), { recursive: true });
 
@@ -109,7 +130,7 @@ const server = createServer(async (req, res) => {
   const headers: OutgoingHttpHeaders = { ...req.headers, host: upstream.host };
   const target = new URL(basePath + (req.url ?? "/"), upstream.origin);
   const send = upstream.protocol === "https:" ? httpsRequest : httpRequest;
-  const up = send(target, { method: req.method, headers, ...(insecure ? { rejectUnauthorized: false } : {}) }, async (ures) => {
+  const up = send(target, { method: req.method, headers, ...tlsOptions }, async (ures) => {
     let resBody: Buffer;
     try {
       resBody = await readAll(ures);
@@ -144,10 +165,14 @@ const server = createServer(async (req, res) => {
     res.writeHead(ures.statusCode ?? 502, ures.statusMessage, ures.rawHeaders);
     res.end(resBody);
   });
-  up.on("error", (e) => {
-    console.error(`proxy: ${req.method} ${target}: ${e.message}`);
+  up.on("error", (e: NodeJS.ErrnoException) => {
+    console.error(`proxy: ${req.method} ${target}: ${e.message}${e.code ? ` (${e.code})` : ""}`);
     if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
-    res.end(`testcase proxy: no pude conectar con ${upstream.origin}: ${e.message}\n`);
+    const hint = CERT_ERROR.test(e.code ?? "")
+      ? `El certificado de ${upstream.host} no es válido para el proxy. Si es un certificado propio de desarrollo, declara en defineService ` +
+        `tls: { ca: "<ruta a la CA en PEM>" } (sigue verificando) o tls: { insecure: true } (no verifica), y corre cases.ts --plan otra vez.\n`
+      : "";
+    res.end(`testcase proxy: no pude conectar con ${upstream.origin}: ${e.message}\n${hint}`);
   });
   up.end(reqBody);
 });

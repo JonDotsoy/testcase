@@ -29,7 +29,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 import { createServer } from "node:net";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { CaseAbort, createContext, declaredServices, isHttpService, serviceKind, maskSensitive, sensitiveValues, takeDefinedCases, type CaseDefinition, type RecordedCheck, type RecordedNotation, type ProcessServiceDefinition, type ProvisionedServiceDefinition, type ServiceDefinition, type ServiceTarget } from "./testcase.ts";
+import { CaseAbort, createContext, declaredServices, isHttpService, serviceKind, maskSensitive, sensitiveValues, takeDefinedCases, type CaseDefinition, type ConnectedServiceDefinition, type RecordedCheck, type RecordedNotation, type ProcessServiceDefinition, type ProvisionedServiceDefinition, type ServiceDefinition, type ServiceTarget } from "./testcase.ts";
 
 const args = process.argv.slice(2);
 const opt = (name: string) => {
@@ -106,6 +106,8 @@ if (dup) {
 
 // Servicios declarados con defineService → report.services
 const PROXY_IMAGE = "docker.io/mitmproxy/mitmproxy:11.0.2";
+/** Host que solo alcanza esta máquina: localhost, *.localhost, 127.0.0.0/8 o ::1. */
+const isLoopback = (host: string) => /^(localhost|.+\.localhost|127(\.\d{1,3}){3}|\[::1\]|::1)$/i.test(host);
 report.services ??= [];
 const declared = declaredServices();
 const usedPorts = new Set<number>(report.services.flatMap((s: any) => (s.ports ?? []).map((p: any) => p.host)));
@@ -219,6 +221,19 @@ if (plan) {
   }
 
   // Ruta del proyecto → ruta relativa a compose.yaml
+  /**
+   * Cómo debe verificar el proxy el certificado del upstream. Solo importa con un endpoint https conectado.
+   * Sin `tls.insecure` explícito, un host local (loopback) no se verifica: sus certificados suelen ser autofirmados.
+   */
+  const upstreamTls = (d: ServiceDefinition): { insecure?: true; ca?: string } => {
+    if (serviceKind(d) !== "connected") return {};
+    const c = d as ConnectedServiceDefinition;
+    const url = new URL(c.endpoint);
+    if (url.protocol !== "https:") return {};
+    if (c.tls?.ca) return { ca: c.tls.ca };
+    if (c.tls?.insecure ?? isLoopback(url.hostname)) return { insecure: true };
+    return {};
+  };
   const fromCompose = (p: string) => {
     const r = relative(reportDir, resolve(projectRoot, p));
     return r.startsWith(".") ? r : `./${r}`;
@@ -327,18 +342,21 @@ if (plan) {
               ? `http://localhost:${s.ports[0].host}`
               : `http://${d.name}:${s.ports[0].container}`;
       const evidence = `evidence/${d.name}.har`;
+      const tls = upstreamTls(d);
       if (engine === "local") {
-        s.proxy = { engine: "local", listen: `http://127.0.0.1:${listenPort}`, upstream, evidence };
-        local.proxies.push({ service: d.name, port: listenPort, upstream, har: evidence, log: `logs/proxy-${d.name}.log` });
+        s.proxy = { engine: "local", listen: `http://127.0.0.1:${listenPort}`, upstream, evidence, ...tls };
+        local.proxies.push({ service: d.name, port: listenPort, upstream, har: evidence, ...tls, log: `logs/proxy-${d.name}.log` });
       } else {
         const proxyName = `proxy-${d.name}`;
-        s.proxy = { engine: "podman", image: PROXY_IMAGE, container: `tc-${proxyName}`, listen: `http://localhost:${listenPort}`, upstream, evidence };
+        s.proxy = { engine: "podman", image: PROXY_IMAGE, container: `tc-${proxyName}`, listen: `http://localhost:${listenPort}`, upstream, evidence, ...tls };
+        // mitmdump verifica el certificado del upstream: ssl_insecure lo apaga y ssl_verify_upstream_trusted_ca agrega una CA.
+        const tlsArgs = tls.insecure ? ["--set", "ssl_insecure=true"] : tls.ca ? ["--set", "ssl_verify_upstream_trusted_ca=/certs/ca.pem"] : [];
         services[proxyName] = {
           image: PROXY_IMAGE,
           container_name: `tc-${proxyName}`,
-          command: ["mitmdump", "--mode", `reverse:${upstream}`, "--listen-port", "8080", "--set", `hardump=/evidence/${d.name}.har`],
+          command: ["mitmdump", "--mode", `reverse:${upstream}`, "--listen-port", "8080", "--set", `hardump=/evidence/${d.name}.har`, ...tlsArgs],
           ports: [`${listenPort}:8080`],
-          volumes: ["./evidence:/evidence:Z"],
+          volumes: ["./evidence:/evidence:Z", ...(tls.ca ? [`${fromCompose(tls.ca)}:/certs/ca.pem:ro,Z`] : [])],
           ...(kind === "connected" ? {} : { depends_on: [d.name] }),
         };
         containerProxies.push(proxyName);
