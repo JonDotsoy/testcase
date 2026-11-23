@@ -7,7 +7,7 @@
  * Lee `<carpeta del reporte>/local.json`, que escribe `cases.ts --plan`.
  *
  * Uso (desde la raíz del proyecto):
- *   node <skill>/scripts/local.ts up --report .testcase/report.json [--timeout 30]
+ *   node <skill>/scripts/local.ts up --report .testcase/report.json [--timeout 30] [--restart]
  *   node <skill>/scripts/local.ts status --report .testcase/report.json
  *   node <skill>/scripts/local.ts down --report .testcase/report.json
  *
@@ -16,6 +16,8 @@
  *          de cada uno en el reporte (`services[].process.pid`, `services[].proxy.pid`) y en `local.pids.json`.
  *          La salida de cada proceso queda en `.testcase/logs/<nombre>.log`. Si un healthcheck es `GET /ruta`,
  *          lo corre y registra el resultado en `services[].health`. Si algo falla, detiene lo que levantó.
+ *          Si ya está todo corriendo con el mismo local.json, no levanta nada y vuelve a anotar los PIDs en el reporte.
+ *          Si hay procesos de otro plan (o alguno se cayó), falla; con `--restart` los detiene y levanta de nuevo.
  * status   Muestra cada PID y si sigue vivo. Termina con 1 si alguno se cayó.
  * down     Detiene primero los proxies (escriben el HAR al detenerse) y luego los procesos, en orden inverso.
  *          SIGTERM al grupo del proceso y, si no termina en `--timeout` segundos, SIGKILL.
@@ -26,6 +28,7 @@
  */
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { request } from "node:http";
 import { connect } from "node:net";
 import { dirname, join, resolve } from "node:path";
@@ -186,14 +189,36 @@ function tsRuntimeArgs(): string[] {
   return maj === 22 && min < 18 ? ["--experimental-strip-types", "--no-warnings"] : [];
 }
 
+const relativeLog = (log: string) => (log.startsWith(reportDir + "/") ? log.slice(reportDir.length + 1) : log);
+
 async function up() {
   if (!existsSync(localPath)) fail(`no existe ${localPath}. Corre antes cases.ts --plan.`);
+  const planText = readFileSync(localPath, "utf8");
+  const planHash = createHash("sha256").update(planText).digest("hex").slice(0, 16);
   if (existsSync(pidsPath)) {
-    const prev: Item[] = JSON.parse(readFileSync(pidsPath, "utf8")).items ?? [];
+    const prevFile = JSON.parse(readFileSync(pidsPath, "utf8"));
+    const prev: Item[] = prevFile.items ?? [];
     const running = prev.filter((i) => alive(i.pid));
-    if (running.length) fail(`ya hay procesos corriendo (${running.map((i) => `${i.name} pid ${i.pid}`).join(", ")}). Corre antes local.ts down.`);
+    if (prev.length && running.length === prev.length && prevFile.plan === planHash) {
+      // Mismo plan y todo vivo: se reutiliza. --plan reescribe services[].proxy, así que se vuelven a anotar los PIDs.
+      const report = readReport();
+      for (const i of prev) {
+        const entry = report.services.find((s: Json) => (i.role === "proxy" ? `proxy-${s.name}` : s.name) === i.name);
+        if (i.role === "proxy" && entry?.proxy) entry.proxy.pid = i.pid;
+        if (i.role === "service" && entry && entry.process?.pid !== i.pid) entry.process = { pid: i.pid, startedAt: prevFile.startedAt, log: relativeLog(i.log) };
+      }
+      writeReport(report);
+      console.log(`Ya están corriendo con el mismo plan: ${prev.map((i) => `${i.name} pid ${i.pid}`).join(", ")}.`);
+      return;
+    }
+    if (running.length && !args.includes("--restart"))
+      fail(`ya hay procesos corriendo (${running.map((i) => `${i.name} pid ${i.pid}`).join(", ")}). Corre antes local.ts down, o usa up --restart.`);
+    if (running.length) {
+      console.log(prevFile.plan === planHash ? "Alguno se cayó: reinicio todo." : "local.json cambió: reinicio lo que estaba corriendo.");
+      await down();
+    }
   }
-  const plan = JSON.parse(readFileSync(localPath, "utf8"));
+  const plan = JSON.parse(planText);
   const projectRoot = resolve(reportDir, plan.projectRoot ?? "..");
 
   // Variables: se revisan todas antes de levantar nada. Las de fromEnvFile salen de su archivo .env
@@ -233,7 +258,7 @@ async function up() {
     const pid = start(s.command, [], { cwd, env, log, shell: true });
     const item: Item = { name: s.name, role: "service", pid, port: s.port, log };
     items.push(item);
-    writeFileSync(pidsPath, JSON.stringify({ startedAt, items }, null, 2) + "\n");
+    writeFileSync(pidsPath, JSON.stringify({ startedAt, plan: planHash, items }, null, 2) + "\n");
     const err = await waitReady(item);
     if (err) await abort(err);
     const entry = svc(s.name);
@@ -257,7 +282,7 @@ async function up() {
     });
     const item: Item = { name: `proxy-${p.service}`, role: "proxy", pid, port: p.port, log };
     items.push(item);
-    writeFileSync(pidsPath, JSON.stringify({ startedAt, items }, null, 2) + "\n");
+    writeFileSync(pidsPath, JSON.stringify({ startedAt, plan: planHash, items }, null, 2) + "\n");
     const err = await waitReady(item);
     if (err) await abort(err);
     const entry = svc(p.service);

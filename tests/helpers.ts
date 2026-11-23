@@ -121,6 +121,7 @@ export async function validateReport(report: unknown): Promise<string[]> {
 }
 
 export const CASES = join(SCRIPTS, "cases.ts");
+const CASE_MODES = ["--plan", "--typecheck", "--only-up-services", "--down-services", "--skip-services"];
 
 /**
  * Proyecto de prueba: `<dir>/.testcase/report.json` (vacío) y `<dir>/.testcase/cases/` con los scripts dados,
@@ -143,9 +144,12 @@ export function project(cases: Record<string, string>, opts: { report?: any } = 
     ws,
     reportFile,
     cleanup,
-    /** Corre scripts/cases.ts con el espacio de trabajo del proyecto, sin instalar. */
+    /**
+     * Corre scripts/cases.ts con el espacio de trabajo del proyecto, sin instalar. Sin una opción de modo
+     * (--plan, --only-up-services…) agrega --skip-services: las pruebas unitarias no levantan contenedores.
+     */
     cases: (args: string[], env: Record<string, string | undefined> = {}) =>
-      runScript(CASES, ["--report", reportFile, "--workspace", ws, "--skip-install", ...args], { cwd: dir, env }),
+      runScript(CASES, ["--report", reportFile, "--workspace", ws, "--skip-install", ...(args.some((a) => CASE_MODES.includes(a)) ? [] : ["--skip-services"]), ...args], { cwd: dir, env }),
     report: () => readJson(reportFile),
   };
 }

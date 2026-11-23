@@ -17,9 +17,10 @@ El resultado de esta skill es un **reporte HTML** de pruebas. Para llegar a él:
 ```text
 persona: describe casos
   └─▶ agente: escribe .testcase/cases/*.case.ts (defineCase + defineService, Playwright)
-  └─▶ cases.ts --plan: servicios al reporte + compose.yaml + local.json ──▶ agente los levanta con su proxy de evidencia (podman compose, local.ts)
-        └─▶ cases.ts: espacio temporal + run.ts, corre los casos por el proxy ──▶ .testcase/evidence/*.har + .testcase/run-assertions.json
+  └─▶ cases.ts: servicios al reporte (compose.yaml, local.json) ──▶ los levanta con su proxy (podman compose, local.ts)
+        ──▶ corre todos los casos por el proxy ──▶ .testcase/evidence/*.har + .testcase/run-assertions.json (los servicios quedan arriba)
               └─▶ import-har.ts ──▶ sync-report.ts ──▶ render-report.ts ──▶ .testcase/report.html
+  └─▶ cases.ts --down-services cuando la persona termina
 ```
 
 ## Archivos de la skill
@@ -31,7 +32,7 @@ persona: describe casos
 | `assets/report.empty.json` | JSON inicial para un proyecto nuevo. |
 | `assets/report.example.json` | Reporte completo de ejemplo (9 casos, 24 requests HTTP, gRPC, GraphQL, WebSocket y SQL). |
 | `assets/report.template.html` | Plantilla del HTML. No la edites para un reporte puntual. |
-| `scripts/cases.ts` | Ejecuta los `*.case.ts`: arma el espacio de trabajo temporal, instala Playwright si hace falta y corre `run.ts` (`--plan`, `--only`, `--headed`, `--typecheck`). |
+| `scripts/cases.ts` | Sin opciones hace todo: arma el espacio de trabajo temporal, instala Playwright si hace falta, pasa los servicios al reporte, los levanta y corre todos los casos de `.testcase/cases/`. `--only-up-services` solo levanta, `--down-services` apaga, `--plan` solo planea; también `--only`, `--headed`, `--typecheck`, `--skip-services`. |
 | `scripts/local.ts` | Levanta, revisa y detiene lo que corre sin contenedor: los procesos locales y los proxies locales (`up`, `status`, `down`). Guarda cada PID en el reporte. |
 | `scripts/proxy.ts` | Proxy de evidencia sin contenedor: reenvía al servicio y escribe el HAR como mitmdump. Lo levanta `local.ts`. |
 | `scripts/import-har.ts` | Importa la evidencia (HAR) del proxy y la une con las aserciones del runner. |
@@ -143,16 +144,22 @@ Reglas:
 - Las aserciones verifican lo que dice el `then`. Si el comportamiento correcto es un error (403, 429, un `errors` de GraphQL), pídelo de forma explícita con `expectedFailure: true`.
 - Las credenciales salen de variables de entorno (`process.env`, `fromEnv`) o de un archivo `.env` (`fromEnvFile`), nunca escritas en el script. El archivo `.env` no se versiona.
 - Usa siempre los servicios declarados y `page()`. No uses `fetch` ni otro cliente: sus requests no llevarían las etiquetas ni pasarían por el proxy.
-- Revisa los tipos antes de correr: `bun <skill>/scripts/cases.ts --report .testcase/report.json --typecheck`. Los imports van a `"../testcase.ts"`, que existe en el espacio de trabajo, no en el proyecto.
+- Revisa los tipos antes de correr: `bun <skill>/scripts/cases.ts --typecheck`. Los imports van a `"../testcase.ts"`, que existe en el espacio de trabajo, no en el proyecto.
 
 ### 3. Proveer los servicios
 
 Los servicios salen de los `defineService` de los scripts. Los contenedores se levantan con un **archivo compose** que genera `run.ts`; los procesos locales y los proxies sin contenedor, con `scripts/local.ts`. **Usa Podman** (`podman compose`). Usa Docker (`docker compose`) solo si Podman no está instalado, y dilo en el reporte (`proxy.engine`, `run.runtime.engine`). Si no hay Podman ni Docker, o la persona lo prefiere, usa proxies locales con `--proxy local`.
 
+`cases.ts` provee los servicios solo: cada corrida pasa al reporte los servicios declarados (`--plan`), los levanta y después corre los casos. Los servicios **quedan levantados** al terminar, para que la siguiente corrida no espere a que arranquen; si ya están corriendo con el mismo plan, los reutiliza, y si el plan cambió, los reinicia.
+
 ```sh
-bun <skill>/scripts/cases.ts --report .testcase/report.json --plan                 # proxies en contenedores
-bun <skill>/scripts/cases.ts --report .testcase/report.json --plan --proxy local   # proxies como procesos locales
+bun <skill>/scripts/cases.ts --only-up-services                 # solo levanta (proxies en contenedores)
+bun <skill>/scripts/cases.ts --only-up-services --proxy local   # proxies como procesos locales
+bun <skill>/scripts/cases.ts --down-services                    # apaga todo: primero los proxies (escriben el HAR), después los servicios
+bun <skill>/scripts/cases.ts --plan                             # solo escribe el reporte, compose.yaml y local.json
 ```
+
+`--report` es `.testcase/report.json` por defecto. Los contenedores se levantan con `podman compose -f .testcase/compose.yaml up -d` (con `--build` si hay imágenes que construir), o `docker compose` si no hay Podman; los procesos locales y los proxies sin contenedor, con `local.ts up`.
 
 `--plan` pasa al reporte los servicios declarados (`connected` con `host` y `endpoint`; `provisioned` con `image`, `build`, `ports`, `env` enmascarado y `dependsOn`; `process` con `command`, `cwd`, `port` y `env`), les asigna puertos y un proxy de evidencia a cada servicio HTTP, y escribe `.testcase/compose.yaml` si hay algo que levantar con compose:
 
@@ -160,23 +167,25 @@ bun <skill>/scripts/cases.ts --report .testcase/report.json --plan --proxy local
 - Un servicio `proxy-<nombre>` (mitmdump) por cada servicio HTTP con proxy en contenedor, que escribe `.testcase/evidence/<nombre>.har` al detenerse.
 - Los valores de `fromEnv()` quedan como `${VAR:?…}`: compose falla con un mensaje claro si la variable no existe.
 
-Y `.testcase/local.json` si hay procesos locales o proxies locales:
+Y `.testcase/local.json` si hay procesos locales o proxies locales, que `cases.ts` levanta con `local.ts`:
 
 - Cada proceso local con su comando, carpeta, puerto, variables y healthcheck. Siempre tiene un proxy local, porque un contenedor no alcanza bien los puertos de esta máquina.
 - Cada proxy local (`scripts/proxy.ts`): puerto, servicio real al que reenvía y HAR. Escribe el HAR después de cada request y al detenerse, con la misma forma que mitmdump.
 - `--proxy local` pone también los proxies de los servicios conectados y de los contenedores HTTP en `local.json`. Sin `--proxy`, cada servicio conserva el tipo de proxy que ya tenía. Un contenedor no puede depender de un proceso local.
 
+`local.ts` también se puede usar directo:
+
 ```sh
-node <skill>/scripts/local.ts up --report .testcase/report.json       # después de podman compose up, si lo hay
 node <skill>/scripts/local.ts status --report .testcase/report.json   # PIDs y si siguen vivos; termina con 1 si alguno se cayó
+node <skill>/scripts/local.ts up --report .testcase/report.json       # [--restart] reinicia si hay procesos de otro plan
 node <skill>/scripts/local.ts down --report .testcase/report.json     # primero los proxies (escriben el HAR), después los procesos
 ```
 
 `up` corre cada proceso en su carpeta en orden de dependencias, espera a que abra su puerto, corre el healthcheck si es `GET /ruta`, levanta los proxies y guarda en el reporte el PID de cada uno (`process.pid`, `proxy.pid`), cuándo arrancó y cuánto tardó (`readyMs`). La salida de cada proceso queda en `.testcase/logs/<nombre>.log`: léela si algo falla. Si un proceso termina o no abre su puerto a tiempo (`--timeout`, 30 s por defecto), detiene lo que levantó y muestra las últimas líneas de su salida. `down` registra `process.stoppedAt` y la señal con que terminó.
 
-No edites `compose.yaml` ni `local.json` a mano: cambia los scripts y vuelve a correr `--plan`. La salida dice cómo levantar todo (`podman compose -f .testcase/compose.yaml up -d`, con `--build` si hay imágenes que construir), cómo detenerlo (primero `stop` de los proxies, después `down`) y qué queda pendiente para ti.
+No edites `compose.yaml` ni `local.json` a mano: cambia los scripts y vuelve a correr. La salida del plan dice qué queda pendiente para ti.
 
-Levanta el compose y completa lo pendiente con datos reales:
+Si hay artefactos (migraciones, seeds) o healthchecks pendientes, levanta primero con `--only-up-services`, completa lo pendiente y después corre los casos con `cases.ts`, que reutiliza los servicios ya levantados. Completa lo pendiente con datos reales:
 
 - Aplica cada artefacto (migraciones, seeds, `.proto`, stubs) y regístralo en `artifacts` con su `status`, `items` y tiempos.
 - Corre cada healthcheck y guarda el resultado en `health` (`healthy`, `unhealthy` o `timeout`). Un servicio conectado se revisa a través de su proxy.
@@ -199,17 +208,19 @@ Todo servicio HTTP se prueba **a través de su proxy**. Nunca llames al servicio
 ### 4. Correr los casos
 
 ```sh
-bun <skill>/scripts/cases.ts --report .testcase/report.json                   # todos
-bun <skill>/scripts/cases.ts --report .testcase/report.json --only UC-03      # solo algunos
-bun <skill>/scripts/cases.ts --report .testcase/report.json --headed          # con el navegador visible
+bun <skill>/scripts/cases.ts                     # levanta los servicios y corre todos los casos de .testcase/cases/
+bun <skill>/scripts/cases.ts --only UC-03        # solo algunos
+bun <skill>/scripts/cases.ts --headed            # con el navegador visible
+bun <skill>/scripts/cases.ts --skip-services     # sin planear ni levantar: los servicios ya están arriba
 ```
 
 `cases.ts` copia los scripts al espacio de trabajo y llama a `run.ts`, que abre una corrida nueva en el reporte (incrementa `run.number`, fija `run.startedAt` y vacía los requests), crea o actualiza cada caso en `useCases` desde su script, copia los scripts a `.testcase/cases/` y corre cada caso. Las aserciones quedan en `.testcase/run-assertions.json`. Si un caso falla antes de hacer requests, queda `pending` con el error como mensaje.
 
+Al terminar, `cases.ts` reinicia los proxies en contenedor (mitmdump escribe el HAR al detenerse); los proxies locales lo escriben después de cada request. Así el HAR ya está y los servicios siguen arriba. Si un servicio no levanta, `cases.ts` no corre los casos y termina con error.
+
 Después:
 
-1. Detén los servicios como indica `--plan`: primero `local.ts down` si hay procesos o proxies locales, después `podman compose -f .testcase/compose.yaml stop proxy-…` (mitmdump escribe el HAR al detenerse) y `down`.
-2. Importa la evidencia de cada servicio:
+1. Importa la evidencia de cada servicio:
 
    ```sh
    bun <skill>/scripts/import-har.ts .testcase/report.json .testcase/evidence/api.har --service api
@@ -243,7 +254,7 @@ Al terminar, borra `.testcase/run-sensitive.json`. Si la persona va a compartir 
 
 ## Cambios posteriores
 
-- **La persona agrega o cambia un caso**: edita o crea su script, corre `--plan` si cambió algún servicio, levanta los servicios, corre `cases.ts --only UC-NN`, importa, sincroniza y genera el HTML. Una corrida con `--only` reemplaza los requests del reporte: si quieres el reporte completo, corre todos los casos.
+- **La persona agrega o cambia un caso**: edita o crea su script, corre `cases.ts --only UC-NN` (vuelve a planear y reinicia los servicios si cambiaron), importa, sincroniza y genera el HTML. Una corrida con `--only` reemplaza los requests del reporte: si quieres el reporte completo, corre todos los casos.
 - **La persona quita un caso**: borra su script y su elemento en `useCases`, y vuelve a correr.
 - **Historial**: antes de una corrida nueva, guarda una copia como `.testcase/report-<número>.json` si la persona lo pide.
 
@@ -282,4 +293,4 @@ Las claves van en minúsculas (se permiten tildes, ñ y espacios), con `-` o `_`
 - No toques un servicio `connected` más allá de los requests de los casos, y no lo llames sin pasar por su proxy.
 - No instales dependencias del espacio de trabajo en el repositorio de la persona: van en el directorio temporal.
 - No borres los archivos de `.testcase/evidence/`: son la evidencia del reporte.
-- No dejes procesos locales corriendo: termina siempre con `local.ts down`, también si la corrida falla.
+- Los servicios quedan levantados entre corridas a propósito. Apágalos con `cases.ts --down-services` cuando la persona termine de iterar o lo pida, no después de cada corrida.

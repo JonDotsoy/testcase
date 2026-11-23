@@ -250,10 +250,35 @@ createServer((req, res) => {
     assert.match(st.out, new RegExp(`web: pid ${web.process.pid} corriendo · puerto ${webPort}`));
   });
 
-  it("up no levanta dos veces", () => {
+  it("up con el mismo plan reutiliza lo que ya corre y vuelve a anotar los PID", () => {
+    const before = readJson(join(p.tc, "local.pids.json")).items.map((i: any) => i.pid);
+    const r0 = p.report();
+    delete r0.services.find((s: any) => s.name === "web").proxy.pid; // como lo deja --plan
+    writeJson(p.reportFile, r0);
+    const r = runScript(LOCAL, ["up", "--report", p.reportFile], { env: { TC_CLAVE: "x" } });
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /Ya están corriendo con el mismo plan/);
+    assert.deepEqual(readJson(join(p.tc, "local.pids.json")).items.map((i: any) => i.pid), before);
+    assert.equal(p.report().services.find((s: any) => s.name === "web").proxy.pid, before[2]);
+  });
+
+  it("up con otro plan no levanta dos veces; con --restart detiene lo anterior y levanta de nuevo", async () => {
+    const localPath = join(p.tc, "local.json");
+    writeJson(localPath, { ...readJson(localPath), $nota: "cambió" });
+    const before = readJson(join(p.tc, "local.pids.json")).items.map((i: any) => i.pid);
     const r = runScript(LOCAL, ["up", "--report", p.reportFile], { env: { TC_CLAVE: "x" } });
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /ya hay procesos corriendo/);
+    assert.match(r.stderr, /ya hay procesos corriendo.*up --restart/);
+    const again = runScript(LOCAL, ["up", "--report", p.reportFile, "--restart"], { env: { TC_CLAVE: "c1@ve" } });
+    assert.equal(again.code, 0, again.out);
+    assert.match(again.out, /local.json cambió: reinicio/);
+    assert.ok(before.every((pid: number) => !alive(pid)), "detuvo los anteriores");
+    rep = p.report();
+    const web = rep.services.find((s: any) => s.name === "web");
+    assert.ok(alive(web.process.pid) && alive(web.proxy.pid));
+    assert.ok(!before.includes(web.process.pid));
+    // El proxy nuevo empieza su HAR desde cero
+    assert.equal((await fetch(`${web.proxy.listen}/hola`)).status, 200);
   });
 
   it("status avisa si un proceso se cayó", async () => {

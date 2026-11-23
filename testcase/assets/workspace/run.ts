@@ -415,12 +415,17 @@ if (plan) {
   if (!hasCompose && !hasLocal) console.log("No hay servicios que levantar: ningún contenedor, proceso local ni proxy.");
   console.log("");
   if (envVars.size) console.log(`# Variables que deben existir en el entorno: ${[...envVars].join(", ")}\n`);
-  if (hasCompose || hasLocal) {
-    console.log("# Levantar");
+  if ((hasCompose || hasLocal) && !process.env.TESTCASE_AUTO_UP) {
+    const cs = `bun ${scriptsDir}/cases.ts --report ${reportPath}`;
+    console.log("# Con cases.ts: sin opciones levanta los servicios y corre los casos; los servicios quedan arriba");
+    console.log(`${cs} --only-up-services   # solo levantar`);
+    console.log(`${cs} --down-services      # apagar (los proxies escriben el HAR)`);
+    console.log("");
+    console.log("# A mano: levantar");
     if (hasCompose) console.log(`${c} up -d${builds ? " --build" : ""}`);
     if (hasLocal) console.log(`${l} up --report ${reportPath}`);
     console.log("");
-    console.log(`# Detener, después de correr los casos. Primero los proxies, que escriben el HAR al detenerse:`);
+    console.log(`# A mano: detener. Primero los proxies, que escriben el HAR al detenerse:`);
     if (hasLocal) console.log(`${l} down --report ${reportPath}`);
     if (containerProxies.length) console.log(`${c} stop ${containerProxies.join(" ")}`);
     if (hasCompose) console.log(`${c} down`);
