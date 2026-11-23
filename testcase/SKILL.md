@@ -52,7 +52,7 @@ Los casos se escriben en `.testcase/cases/` del proyecto. No instales nada en el
 Los casos van en `.testcase/cases/*.case.ts`: un archivo por caso (`UC-NN.case.ts`) o varios casos relacionados en un archivo. **Cada script es autocontenido**: importa desde `testcase.ts` todo lo que usa y declara con `defineService` los servicios que necesita. Así, el script basta para saber qué se prueba, contra qué y cómo.
 
 ```ts
-import { defineCase, defineService, fromEnv, sensitive, title, given, when, then, notation, check, ensure, page } from "../testcase.ts";
+import { defineCase, defineService, fromEnv, sensitive, title, given, when, then, notation, check, ensure, between, page } from "../testcase.ts";
 
 // Servicio URL que ya existe: sus requests pasan por el proxy de evidencia.
 const api = await defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
@@ -93,6 +93,8 @@ await defineCase(async () => {
 
   await then("la API responde 403", () => {
     check("status == 403", cancel.status(), 403, { expectedFailure: true });
+    check("el body trae detail", cancel.body.detail, (d: unknown) => typeof d === "string" && d.length > 0); // validador
+    check("es un error del cliente (4xx)", cancel.status(), between(400, 499), { expectedFailure: true });
   });
 
   await then("el pedido sigue en estado pending", async () => {
@@ -120,7 +122,7 @@ La API completa:
 | `servicio.get/post/put/patch/delete/fetch(ruta, opts)` | Request HTTP (Playwright) por el proxy del servicio, con `data`, `form`, `params`, `headers`. Devuelve `body` (el JSON ya parseado, o el texto), `status()` y `headers()`. |
 | `servicio.url(ruta)` | URL del servicio por el proxy, para `page().goto()`. |
 | `notation(nombre, valor, { response? })` | Define una anotación y devuelve el valor: `const timeAlive = notation("time alive", res.body.timeAlive)`. En el cuerpo de `defineCase`, fuera de los pasos, es de todo el caso. En un paso, antes de un request, la llevan los requests que siguen en ese paso. Después de un request, se une a ese request. |
-| `check(expresión, actual, esperado, { response?, expectedFailure? })` | Registra una aserción y sigue. Sin `response`, se une al último request del paso, o al último del caso si el paso no hizo ninguno (por ejemplo, un `then` que revisa la respuesta del `when`). |
+| `check(expresión, actual, esperado, { response?, expectedFailure? })` | Registra una aserción y sigue. Sin `response`, se une al último request del paso, o al último del caso si el paso no hizo ninguno (por ejemplo, un `then` que revisa la respuesta del `when`). El esperado es un valor (igualdad profunda) o un **validador**: una función que recibe el valor real y devuelve `true` o `false`, por ejemplo `check("total positivo", body.total, (n) => n > 0)`. Si lanza un error, la aserción falla. Hay validadores listos: `instanceOf(Date)`, `between(0, 500)` y `satisfies("descripción", fn)`. En el reporte, el esperado queda como la descripción del validador o, si no tiene, su código. |
 | `ensure(…)` | Igual que `check`, pero detiene el caso si falla. |
 | `page()` | Página de Playwright. Todos sus requests llevan las etiquetas del caso y del paso. |
 | `vars` | Datos compartidos entre los pasos del caso. Casi nunca hace falta: usa lo que devuelve cada paso. |

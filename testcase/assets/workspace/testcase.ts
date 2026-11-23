@@ -83,7 +83,7 @@ export interface CaseContext {
   step(paso: Paso, annotations?: Annotations): Promise<void>;
   /** Define una anotación y devuelve el valor. Ver `notation()`. */
   notation<T>(name: string, value: T, opts?: NotationOptions): T;
-  /** Registra una aserción. Devuelve si pasó. No lanza: el caso sigue corriendo. */
+  /** Registra una aserción. Devuelve si pasó. No lanza: el caso sigue corriendo. El esperado puede ser un validador. */
   check(expression: string, actual: unknown, expected: unknown, opts?: CheckOptions): boolean;
   /** Igual que `check`, pero detiene el caso si falla. */
   require(expression: string, actual: unknown, expected: unknown, opts?: CheckOptions): void;
@@ -489,7 +489,55 @@ function context(what: string): CaseContext {
   return t;
 }
 
-/** Registra una aserción y sigue. Igual que `t.check`. */
+/**
+ * Validador para el esperado de check() y ensure(): recibe el valor real y devuelve true si pasa.
+ * Si devuelve false o lanza un error, la aserción falla. En el reporte, el esperado queda como su descripción.
+ */
+export type Validator<T = any> = ((actual: T) => boolean) & { description?: string };
+
+/** Validador con una descripción legible para el reporte: `satisfies("par", (n) => n % 2 === 0)`. */
+export function satisfies<T = any>(description: string, fn: (actual: T) => boolean): Validator<T> {
+  return Object.assign((actual: T) => fn(actual), { description });
+}
+
+/** El valor es instancia de la clase: `check("creado es fecha", body.creado, instanceOf(Date))`. */
+export function instanceOf(cls: abstract new (...args: any[]) => unknown): Validator {
+  return satisfies(`instancia de ${cls.name || "la clase"}`, (v) => v instanceof cls);
+}
+
+/** El número está en el rango, con los extremos incluidos: `check("latencia", ms, between(0, 500))`. */
+export function between(min: number, max: number): Validator<number> {
+  return satisfies(`entre ${min} y ${max}`, (v) => typeof v === "number" && v >= min && v <= max);
+}
+
+/** Cómo queda en el reporte el esperado de un validador: su descripción o su código. */
+function describeValidator(fn: Validator): string {
+  if (fn.description) return fn.description;
+  // Con TypeScript sin compilar, los tipos quedan como espacios: "(n: number) =>" se lee "(n         ) =>".
+  const src = Function.prototype.toString.call(fn).replace(/\s+/g, " ").replace(/ ([),;\]}])/g, "$1").trim();
+  return src.length > 200 ? src.slice(0, 199) + "…" : src;
+}
+
+/** Compara el valor real con el esperado. Un esperado que es función se usa como validador. */
+function evaluate(actual: unknown, expected: unknown): { passed: boolean; expected: unknown } {
+  if (typeof expected !== "function") return { passed: isDeepStrictEqual(actual, expected), expected };
+  const fn = expected as Validator;
+  const desc = describeValidator(fn);
+  let r: unknown;
+  try {
+    r = fn(actual);
+  } catch (e) {
+    return { passed: false, expected: `${desc} (lanzó: ${(e as Error)?.message ?? String(e)})` };
+  }
+  if (r instanceof Promise) throw new Error(`El validador de check() no puede ser async: ${desc}`);
+  if (typeof r !== "boolean") throw new Error(`El validador de check() debe devolver true o false: ${desc}`);
+  return { passed: r, expected: desc };
+}
+
+/**
+ * Registra una aserción y sigue. Igual que `t.check`.
+ * El esperado es un valor (se compara en profundidad) o un validador: `check("total", body.total, (n) => n > 0)`.
+ */
 export function check(expression: string, actual: unknown, expected: unknown, opts?: CheckOptions): boolean {
   return context("check()").check(expression, actual, expected, opts);
 }
@@ -692,8 +740,8 @@ export function createContext(opts: {
     };
   }
 
-  function check(expression: string, actual: unknown, expected: unknown, o: CheckOptions = {}): boolean {
-    const passed = isDeepStrictEqual(actual, expected);
+  function check(expression: string, actual: unknown, expectedArg: unknown, o: CheckOptions = {}): boolean {
+    const { passed, expected } = evaluate(actual, expectedArg);
     const byRequest = o.response?.tag ?? (page ? undefined : lastRequestTag ?? lastCaseRequestTag);
     checks.push({
       tag: byRequest ?? stepTag,

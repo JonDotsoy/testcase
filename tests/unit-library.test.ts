@@ -5,8 +5,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  between,
   check,
   createContext,
+  instanceOf,
+  satisfies,
   declaredServices,
   defineCase,
   defineService,
@@ -303,6 +306,45 @@ describe("contexto de un caso", () => {
     assert.equal(siguiente, false, "los pasos siguientes no corren");
     assert.deepEqual(r.checks.map((c) => [c.expression, c.passed]), [["objetos iguales", true], ["distintos", false], ["falla", false]]);
     assert.deepEqual([r.checks[1].expected, r.checks[1].actual], [{ a: "1" }, { a: 1 }]);
+  });
+
+  it("check acepta un validador como esperado: instancia, rango, función propia", async () => {
+    const def = await defineCase(async () => {
+      await id("UC-04");
+      await title("x");
+      await given("a", () => {
+        assert.equal(check("es fecha", new Date(), instanceOf(Date)), true);
+        assert.equal(check("no es fecha", "2026-11-23", instanceOf(Date)), false);
+        assert.equal(check("en rango", 250, between(0, 500)), true);
+        assert.equal(check("fuera de rango", 900, between(0, 500)), false);
+        assert.equal(check("positivo", 3, (n: number) => n > 0), true);
+        assert.equal(check("par", 3, satisfies("número par", (n: number) => n % 2 === 0)), false);
+        assert.equal(
+          check("lanza", null, (v: any) => v.id === 1),
+          false,
+        );
+        ensure("ensure con validador", "abc", (s: string) => s.startsWith("a"));
+      });
+      await when("b", () => {
+        assert.throws(() => check("no booleano", 1, () => "sí" as any), /debe devolver true o false/);
+        assert.throws(() => check("async", 1, (async () => true) as any), /no puede ser async/);
+      });
+      await then("c");
+    });
+    await takeDefinedCases();
+    const r = runCase(def);
+    await def.run(r.ctx.t);
+    const by = Object.fromEntries(r.checks.map((c) => [c.expression, c]));
+    assert.deepEqual(
+      r.checks.map((c) => [c.expression, c.passed]),
+      [["es fecha", true], ["no es fecha", false], ["en rango", true], ["fuera de rango", false], ["positivo", true], ["par", false], ["lanza", false], ["ensure con validador", true]],
+    );
+    assert.equal(by["no es fecha"].expected, "instancia de Date");
+    assert.equal(by["fuera de rango"].expected, "entre 0 y 500");
+    assert.equal(by["fuera de rango"].actual, 900);
+    assert.equal(by["positivo"].expected, "(n) => n > 0", "sin descripción, el esperado es el código del validador");
+    assert.equal(by["par"].expected, "número par");
+    assert.match(String(by["lanza"].expected), /^\(v\) => v\.id === 1 \(lanzó: .*null/);
   });
 
   it("body: JSON parseado, texto si no es JSON, undefined si viene vacío", async () => {
