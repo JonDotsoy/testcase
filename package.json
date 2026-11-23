@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "description": "Pruebas de la skill testcase. La skill en sí (testcase/) no tiene dependencias.",
+  "license": "MIT",
   "scripts": {
     "test": "node --test --test-concurrency=1 \"tests/*.test.ts\"",
     "test:unit": "node --test --test-concurrency=1 \"tests/unit-*.test.ts\"",

@@ -1,6 +1,7 @@
 ---
 name: testcase
 description: Convierte los casos de prueba que describe la persona en un reporte HTML de testmania. El agente escribe cada caso como script TypeScript con Playwright, provisiona los servicios (contenedores con Podman o procesos locales) con un proxy de evidencia, mantiene el JSON del reporte y genera el HTML. Úsala cuando la persona describa casos de prueba, pida probar un flujo de una API o pida el reporte de pruebas.
+license: MIT
 ---
 
 # testcase

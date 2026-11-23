@@ -2,6 +2,9 @@
 
 Skill para agentes que convierte los casos de prueba que describe una persona en un **reporte HTML** de [testmania](https://testmania.dev). La persona dice qué quiere probar ("un cliente no puede cancelar el pedido de otro"); el agente escribe cada caso como un script TypeScript con Playwright, levanta los servicios con un proxy que guarda la evidencia de cada request y genera el reporte con los scripts de la skill.
 
+> [!WARNING]
+> **Versión experimental.** La skill está en desarrollo activo: la sintaxis de los casos (`defineCase`, `defineService`, `check`…), el schema de `report.json`, la plantilla del HTML y los argumentos de los scripts pueden cambiar sin aviso y sin compatibilidad hacia atrás entre versiones. Úsala para probar la idea y dar feedback, no como base de una suite que no puedas ajustar. Un `report.json` creado con una versión puede necesitar ajustes para la siguiente.
+
 ![Resumen del reporte: totales de la corrida y tarjetas de los casos de uso con su given, when y then](docs/report-overview.png)
 
 El reporte muestra cada caso de uso con sus pasos y los requests que hizo, la línea de tiempo de la corrida y el detalle de cada request: anotaciones, aserciones con el valor esperado y el recibido, headers, body y cómo reproducirlo.
@@ -116,3 +119,7 @@ npm run docs:screenshots             # regenera las capturas de este README
 ```
 
 Requieren Node 22.18 o superior. La prueba de `compose.yaml` usa `docker compose config` si está instalado.
+
+## Licencia
+
+[MIT](LICENSE) © 2026 Jonathan Delgado.
