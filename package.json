@@ -7,7 +7,8 @@
     "test": "node --test --test-concurrency=1 \"tests/*.test.ts\"",
     "test:unit": "node --test --test-concurrency=1 \"tests/unit-*.test.ts\"",
     "test:e2e": "node --test \"tests/e2e.test.ts\"",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "docs:screenshots": "node docs/screenshots.ts"
   },
   "engines": {
     "node": ">=22.18"
