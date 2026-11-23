@@ -10,8 +10,8 @@
  *
  *   await defineCase(async () => {
  *     await title("Cliente no puede cancelar un pedido ajeno");
- *     const login = await given("Pedro inicia sesión", async () => api.post("/v1/auth/token", { data: { … } }));
- *     const res = await when("Pedro intenta cancelar el pedido de María", async () => api.delete("/v1/orders/ord_01JD9"));
+ *     const login = await given("Pedro inicia sesión", async () => api.http.post("/v1/auth/token", { data: { … } }));
+ *     const res = await when("Pedro intenta cancelar el pedido de María", async () => api.http.delete("/v1/orders/ord_01JD9"));
  *     await then("la API responde 403", () => check("status == 403", res.status(), 403, { expectedFailure: true }));
  *   });
  *
@@ -266,8 +266,8 @@ export async function takeDefinedCases(): Promise<CaseDefinition[]> {
  *
  *   await defineCase(async () => {
  *     await title("Cliente no puede cancelar un pedido ajeno");
- *     const login = await given("Pedro inicia sesión", async () => api.post("/v1/auth/token", { data }));
- *     const res = await when("Pedro intenta cancelar el pedido de María", async () => api.delete(…));
+ *     const login = await given("Pedro inicia sesión", async () => api.http.post("/v1/auth/token", { data }));
+ *     const res = await when("Pedro intenta cancelar el pedido de María", async () => api.http.delete(…));
  *     await then("la API responde 403", () => check("status == 403", res.status(), 403));
  *   });
  *
@@ -582,12 +582,14 @@ export function isHttpService(def: ServiceDefinition): boolean {
   return !!(def as ProvisionedServiceDefinition).http;
 }
 
-/** Servicio declarado en el script. Sus métodos HTTP pasan por el proxy y quedan como evidencia del caso. */
-export interface Service extends Api {
+/** Servicio declarado en el script. Sus requests pasan por el proxy y quedan como evidencia del caso. */
+export interface Service {
   readonly name: string;
   readonly definition: ServiceDefinition;
   /** URL del servicio a través de su proxy, para `page.goto()`. */
   url(path?: string): string;
+  /** Cliente HTTP del servicio: `get`, `post`, `put`, `patch`, `delete` y `fetch`. Ver {@link Api}. */
+  readonly http: Api;
   /** Cliente GraphQL del servicio: `query()` y `mutation()`. Ver {@link GraphQL}. */
   readonly graphql: GraphQL;
 }
@@ -646,12 +648,14 @@ function registerService(def: ServiceDefinition): Service {
     name: def.name,
     definition: def,
     url: (path) => context("url()").url(def.name, path),
-    get: (p, o) => http().get(p, o),
-    post: (p, o) => http().post(p, o),
-    put: (p, o) => http().put(p, o),
-    patch: (p, o) => http().patch(p, o),
-    delete: (p, o) => http().delete(p, o),
-    fetch: (p, o) => http().fetch(p, o),
+    http: {
+      get: (p, o) => http().get(p, o),
+      post: (p, o) => http().post(p, o),
+      put: (p, o) => http().put(p, o),
+      patch: (p, o) => http().patch(p, o),
+      delete: (p, o) => http().delete(p, o),
+      fetch: (p, o) => http().fetch(p, o),
+    },
     graphql: {
       query: (d, o) => graphqlCall(http(), def, "query", d, o),
       mutation: (d, o) => graphqlCall(http(), def, "mutation", d, o),
@@ -700,7 +704,7 @@ const sensitiveSet = new Set<string>();
  * Declara un valor o texto sensible y lo devuelve tal cual, para usarlo en la misma línea:
  *
  *   const password = sensitive(process.env.PEDRO_PASSWORD ?? "");
- *   await api.post("/v1/auth/token", { data: { email, password } });
+ *   await api.http.post("/v1/auth/token", { data: { email, password } });
  *
  * El caso usa el valor real. En el reporte y en el HTML queda ofuscado (`••••`) en todo lugar donde aparezca:
  * URL, headers, bodies, anotaciones y aserciones. Funciona en el módulo, en defineCase o dentro de un paso.
@@ -866,9 +870,9 @@ const cookieValue = (v: string) => v.replace(/[^\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\
  * opción `cookies` lo envía y lo actualiza con los Set-Cookie de la respuesta.
  *
  *   const cookies = new Cookies();
- *   await api.post("/login", { data, cookies });   // la respuesta fija "sesion"
- *   await api.get("/perfil", { cookies });         // envía "sesion"
- *   await api.post("/logout", { cookies });        // la respuesta la borra
+ *   await api.http.post("/login", { data, cookies });   // la respuesta fija "sesion"
+ *   await api.http.get("/perfil", { cookies });         // envía "sesion"
+ *   await api.http.post("/logout", { cookies });        // la respuesta la borra
  */
 export class Cookies implements Iterable<[string, string]> {
   #map = new Map<string, string>();

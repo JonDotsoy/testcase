@@ -42,7 +42,7 @@ await defineCase(async () => {
     notation("usuario", "pedro@acme.test"); // antes del request: la lleva el request que sigue
     notation("perfil", "cliente");
     const password = sensitive(process.env.PEDRO_PASSWORD ?? ""); // en el HTML queda oculto
-    const login = await api.post("/v1/auth/token", { data: { email: "pedro@acme.test", password } });
+    const login = await api.http.post("/v1/auth/token", { data: { email: "pedro@acme.test", password } });
     ensure("status == 200", login.status(), 200);
     notation("rol", login.body.user.role); // después del request: se une a ese request
     return sensitive(login.body.access_token as string);
@@ -51,7 +51,7 @@ await defineCase(async () => {
   const cancel = await when("Pedro intenta cancelarlo", async () => {
     notation("usuario", "pedro@acme.test");
     notation("dueño del recurso", "maria@acme.test");
-    return api.delete("/v1/orders/ord_01JD9", { headers: { authorization: `Bearer ${token}` } });
+    return api.http.delete("/v1/orders/ord_01JD9", { headers: { authorization: `Bearer ${token}` } });
   });
 
   await then("la API responde 403", () => {
