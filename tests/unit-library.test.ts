@@ -403,9 +403,10 @@ describe("contexto de un caso", () => {
       const login = await given("inicia sesión", () => api.post("/login", { cookies: { tema: "oscuro", aviso: "1" } }));
       const perfil = await when("ve su perfil", () => api.get("/perfil", { cookies: login.cookies }));
       await then("cierra sesión", async () => {
-        perfilCookies = perfil.cookies;
+        perfilCookies = new Cookies(perfil.cookies); // copia: perfil.cookies se actualiza al pasarlo al logout
         const salir = await api.post("/logout", { cookies: perfil.cookies });
         assert.deepEqual(salir.cookies.toJSON(), { tema: "oscuro", carrito: "c1" }, "logout borra la sesión");
+        assert.equal(perfil.cookies.has("sesion"), false, "el Cookies pasado al logout también se actualizó");
       });
     });
     await takeDefinedCases();
@@ -423,6 +424,28 @@ describe("contexto de un caso", () => {
     assert.equal(perfilCookies!.get("sesion"), "abc==", "el = del valor no se codifica");
     assert.equal(perfilCookies!.has("aviso"), false, "Max-Age=0 la borra");
     assert.equal(String(perfilCookies), "tema=oscuro; sesion=abc==; carrito=c1");
+  });
+
+  it("un Cookies pasado en la opción funciona como contexto de cookies entre requests", async () => {
+    const api = await defineService({ name: "api", endpoint: "https://api.example.com" });
+    const cookies = new Cookies({ tema: "oscuro" });
+    const def = await defineCase(async () => {
+      await id("UC-07");
+      await title("x");
+      await given("inicia sesión", () => api.post("/login", { cookies }));
+      await when("ve su perfil", () => api.get("/perfil", { cookies }));
+      await then("cierra sesión", () => api.post("/logout", { cookies }));
+    });
+    await takeDefinedCases();
+    const r = runCase(def, (path) => {
+      const h: Record<string, string> = { "content-type": "application/json" };
+      if (path === "login") h["set-cookie"] = "sesion=abc==; Path=/";
+      if (path === "logout") h["set-cookie"] = "sesion=; Max-Age=0";
+      return { headers: h, body: "{}" };
+    });
+    await def.run(r.ctx.t);
+    assert.deepEqual(r.calls.map((c) => c.opts.headers.cookie), ["tema=oscuro", "tema=oscuro; sesion=abc==", "tema=oscuro; sesion=abc=="]);
+    assert.deepEqual(cookies.toJSON(), { tema: "oscuro" }, "el logout borró la sesión del mismo objeto");
   });
 
   it("body: JSON parseado, texto si no es JSON, undefined si viene vacío", async () => {

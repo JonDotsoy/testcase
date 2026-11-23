@@ -36,7 +36,9 @@ export interface RequestOptions {
   headers?: Record<string, string>;
   /**
    * Cookies del request: `{ cookies: { "my-cookie": "true" } }` envía `Cookie: my-cookie=true`.
-   * También acepta las `cookies` de una respuesta anterior, para reenviarlas: `{ cookies: login.cookies }`.
+   * También acepta un `Cookies`: las `cookies` de una respuesta anterior o un contexto de cookies propio
+   * (`const cookies = new Cookies()`). Un `Cookies` pasado aquí se actualiza con los Set-Cookie de la respuesta,
+   * así el mismo objeto sirve para toda una secuencia de requests, como el almacén de cookies de un navegador.
    * Dentro de un caso, Playwright ya reenvía al mismo servicio las cookies que este fijó; con `cookies`, el header
    * Cookie lleva exactamente lo que se pasa y reemplaza esas cookies automáticas.
    * Los caracteres que no van en una cookie (espacios, `;`, comas, comillas, no ASCII) se codifican.
@@ -657,10 +659,13 @@ const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const cookieValue = (v: string) => v.replace(/[^\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]/gu, (c) => encodeURIComponent(c));
 
 /**
- * Cookies de un request o de una respuesta, por nombre. Se pasan tal cual en la opción `cookies` de otro request:
+ * Cookies por nombre. Sirve de contexto de cookies para una secuencia de requests: cada request que lo recibe en la
+ * opción `cookies` lo envía y lo actualiza con los Set-Cookie de la respuesta.
  *
- *   const login = await api.post("/login", { data });
- *   const perfil = await api.get("/perfil", { cookies: login.cookies });
+ *   const cookies = new Cookies();
+ *   await api.post("/login", { data, cookies });   // la respuesta fija "sesion"
+ *   await api.get("/perfil", { cookies });         // envía "sesion"
+ *   await api.post("/logout", { cookies });        // la respuesta la borra
  */
 export class Cookies implements Iterable<[string, string]> {
   #map = new Map<string, string>();
@@ -880,7 +885,10 @@ export function createContext(opts: {
         }
       }
       // Las enviadas a mano, con los Set-Cookie aplicados, más las que Playwright guarda para este servicio
-      const cookies = new Cookies(parseCookieHeader(reqHeaders.cookie)).applySetCookie(setCookieLines(raw));
+      const setCookies = setCookieLines(raw);
+      // Un Cookies pasado en la opción es un contexto de cookies: se actualiza con lo que fijó o borró la respuesta
+      if (o.cookies instanceof Cookies) o.cookies.applySetCookie(setCookies);
+      const cookies = new Cookies(parseCookieHeader(reqHeaders.cookie)).applySetCookie(setCookies);
       if (typeof (ctx as any).storageState === "function") {
         const state = await ctx.storageState().catch(() => undefined);
         for (const c of state?.cookies ?? []) cookies.merge([[c.name, c.value]]);
