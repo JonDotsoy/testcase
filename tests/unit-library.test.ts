@@ -187,7 +187,7 @@ describe("contexto de un caso", () => {
       const login = await given("a", async () => {
         order.push("given");
         notation("usuario", "pedro@acme.test");
-        return api.post("/v1/auth/token", { data: { email: "pedro@acme.test" }, headers: { "x-extra": "1" } });
+        return api.http.post("/v1/auth/token", { data: { email: "pedro@acme.test" }, headers: { "x-extra": "1" } });
       });
       const token: string = login.body.access_token; // entre pasos: con datos reales al correr
       order.push(`token=${token}`);
@@ -258,8 +258,8 @@ describe("contexto de un caso", () => {
         check("antes de cualquier request", 1, 1);
       });
       const [a, b] = await when("dos requests", async () => {
-        const a = await api.get("/a");
-        const b = await api.get("/b");
+        const a = await api.http.get("/a");
+        const b = await api.http.get("/b");
         notation("después de b", b.body.n);
         notation("sobre a", "x", { response: a });
         check("sin response: el último del paso", b.status(), 200);
@@ -383,9 +383,9 @@ describe("contexto de un caso", () => {
     const def = await defineCase(async () => {
       await id("UC-09");
       await title("x");
-      await given("un pedido", () => (ran.push("given"), api.get("/pedido")));
+      await given("un pedido", () => (ran.push("given"), api.http.get("/pedido")));
       await given.skip(Promise.resolve("un buzón de prueba"), () => ran.push("given.skip"));
-      saltado = await when.skip("se envía el correo", () => (ran.push("when.skip"), api.post("/correo")));
+      saltado = await when.skip("se envía el correo", () => (ran.push("when.skip"), api.http.post("/correo")));
       registrado.push(saltado);
       await when("se cancela", () => ran.push("when"));
       await then.skip("llega el correo", () => ran.push("then.skip"));
@@ -418,9 +418,9 @@ describe("contexto de un caso", () => {
     const def = await defineCase(async () => {
       await id("UC-05");
       await title("x");
-      await given("a", () => api.get("/a", { cookies: { "my-cookie": "true", sesion: "a b;c" } }));
-      await when("b", () => api.get("/b", { headers: { Cookie: "previa=1" }, cookies: { n: 2 } }));
-      await then("c", () => api.get("/c"));
+      await given("a", () => api.http.get("/a", { cookies: { "my-cookie": "true", sesion: "a b;c" } }));
+      await when("b", () => api.http.get("/b", { headers: { Cookie: "previa=1" }, cookies: { n: 2 } }));
+      await then("c", () => api.http.get("/c"));
     });
     await takeDefinedCases();
     const r = runCase(def);
@@ -439,11 +439,11 @@ describe("contexto de un caso", () => {
     const def = await defineCase(async () => {
       await id("UC-06");
       await title("x");
-      const login = await given("inicia sesión", () => api.post("/login", { cookies: { tema: "oscuro", aviso: "1" } }));
-      const perfil = await when("ve su perfil", () => api.get("/perfil", { cookies: login.cookies }));
+      const login = await given("inicia sesión", () => api.http.post("/login", { cookies: { tema: "oscuro", aviso: "1" } }));
+      const perfil = await when("ve su perfil", () => api.http.get("/perfil", { cookies: login.cookies }));
       await then("cierra sesión", async () => {
         perfilCookies = new Cookies(perfil.cookies); // copia: perfil.cookies se actualiza al pasarlo al logout
-        const salir = await api.post("/logout", { cookies: perfil.cookies });
+        const salir = await api.http.post("/logout", { cookies: perfil.cookies });
         assert.deepEqual(salir.cookies.toJSON(), { tema: "oscuro", carrito: "c1" }, "logout borra la sesión");
         assert.equal(perfil.cookies.has("sesion"), false, "el Cookies pasado al logout también se actualizó");
       });
@@ -471,9 +471,9 @@ describe("contexto de un caso", () => {
     const def = await defineCase(async () => {
       await id("UC-07");
       await title("x");
-      await given("inicia sesión", () => api.post("/login", { cookies }));
-      await when("ve su perfil", () => api.get("/perfil", { cookies }));
-      await then("cierra sesión", () => api.post("/logout", { cookies }));
+      await given("inicia sesión", () => api.http.post("/login", { cookies }));
+      await when("ve su perfil", () => api.http.get("/perfil", { cookies }));
+      await then("cierra sesión", () => api.http.post("/logout", { cookies }));
     });
     await takeDefinedCases();
     const r = runCase(def, (path) => {
@@ -581,7 +581,7 @@ describe("contexto de un caso", () => {
       await given("a");
       const seen = await when("b", async () => {
         const out: unknown[] = [];
-        for (const p of ["json", "texto", "vacío", "json-roto"]) out.push((await api.get(p)).body);
+        for (const p of ["json", "texto", "vacío", "json-roto"]) out.push((await api.http.get(p)).body);
         return out;
       });
       await then("c", () => {
@@ -607,7 +607,7 @@ describe("contexto de un caso", () => {
       await id("UC-05");
       await title("x");
       await given("a", async () => {
-        await otro.get("/");
+        await otro.http.get("/");
       });
       await when("b");
       await then("c");

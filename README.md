@@ -62,14 +62,14 @@ await defineCase(async () => {
   await describe("Un cliente solo puede cancelar sus propios pedidos. La API rechaza la cancelación y el pedido no cambia.");
 
   const token = await given("Pedro inició sesión", async () => {
-    const login = await api.post("/v1/auth/token", { data: { email: "pedro@acme.test", password: sensitive(process.env.PEDRO_PASSWORD) } });
+    const login = await api.http.post("/v1/auth/token", { data: { email: "pedro@acme.test", password: sensitive(process.env.PEDRO_PASSWORD) } });
     ensure("status == 200", login.status(), 200); // si falla, el caso se detiene aquí
     return sensitive(login.body.access_token);
   });
 
   const cancel = await when("Pedro intenta cancelar el pedido de María", async () => {
     notation("usuario", "pedro@acme.test");
-    return api.delete("/v1/orders/ord_01JD9", { headers: { authorization: `Bearer ${token}` } });
+    return api.http.delete("/v1/orders/ord_01JD9", { headers: { authorization: `Bearer ${token}` } });
   });
 
   await then("la API responde 403", () => {

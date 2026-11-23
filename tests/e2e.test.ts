@@ -109,7 +109,7 @@ await defineCase(async () => {
   const token = await given("un pedido creado por María", async () => {
     notation("usuario", "pedro@acme.test");
     const password = sensitive(process.env.E2E_PASSWORD ?? "");
-    const login = await api.post("/v1/auth/token", { data: { email: "pedro@acme.test", password } });
+    const login = await api.http.post("/v1/auth/token", { data: { email: "pedro@acme.test", password } });
     ensure("status == 200", login.status(), 200);
     notation("rol", login.body.user.role);
     return sensitive(login.body.access_token as string);
@@ -117,7 +117,7 @@ await defineCase(async () => {
 
   const cancel = await when("Pedro intenta cancelarlo", async () => {
     notation("dueño del recurso", "maria@acme.test");
-    return api.delete("/v1/orders/ord_01JD9", { headers: { authorization: \`Bearer \${token}\` } });
+    return api.http.delete("/v1/orders/ord_01JD9", { headers: { authorization: \`Bearer \${token}\` } });
   });
 
   await then("la API responde 403", () => {
@@ -138,11 +138,11 @@ await defineCase(async () => {
   await id("UC-02");
   await title("Cliente cancela su propio pedido");
   await given("un pedido de Pedro", async () => {
-    const login = await api.post("/v1/auth/token", { data: { password: sensitive(process.env.E2E_PASSWORD ?? "") } });
+    const login = await api.http.post("/v1/auth/token", { data: { password: sensitive(process.env.E2E_PASSWORD ?? "") } });
     vars.token = sensitive(login.body.access_token);
   });
   const res = await when("Pedro lo cancela", async () =>
-    api.delete("/v1/orders/ord_PEDRO", { headers: { authorization: \`Bearer \${vars.token}\` } }),
+    api.http.delete("/v1/orders/ord_PEDRO", { headers: { authorization: \`Bearer \${vars.token}\` } }),
   );
   await then("la API responde 204", () => check("status == 204", res.status(), 204));
 });
@@ -151,7 +151,7 @@ await defineCase(async () => {
   await id("UC-03");
   await title("Login con contraseña equivocada");
   await given("un usuario existente");
-  const res = await when("inicia sesión con otra contraseña", async () => api.post("/v1/auth/token", { data: { password: "otra-cosa" } }));
+  const res = await when("inicia sesión con otra contraseña", async () => api.http.post("/v1/auth/token", { data: { password: "otra-cosa" } }));
   await then("la API responde 401", () => ensure("status == 401", res.status(), 401));
 });
 `,
