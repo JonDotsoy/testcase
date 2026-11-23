@@ -36,10 +36,13 @@ export interface RequestOptions {
   headers?: Record<string, string>;
   /**
    * Cookies del request: `{ cookies: { "my-cookie": "true" } }` envía `Cookie: my-cookie=true`.
-   * Los valores se codifican con encodeURIComponent. Se suman a un header `cookie` que ya venga en `headers`.
-   * En el reporte el header Cookie queda enmascarado como los demás headers sensibles.
+   * También acepta las `cookies` de una respuesta anterior, para reenviarlas: `{ cookies: login.cookies }`.
+   * Dentro de un caso, Playwright ya reenvía al mismo servicio las cookies que este fijó; con `cookies`, el header
+   * Cookie lleva exactamente lo que se pasa y reemplaza esas cookies automáticas.
+   * Los caracteres que no van en una cookie (espacios, `;`, comas, comillas, no ASCII) se codifican.
+   * Se suman a un header `cookie` que ya venga en `headers`. En el reporte el header queda oculto como los demás valores sensibles.
    */
-  cookies?: Record<string, string | number | boolean>;
+  cookies?: CookiesInit;
   /** Body JSON. */
   data?: unknown;
   /** Body de formulario. */
@@ -56,6 +59,11 @@ export interface TrackedResponse {
   readonly raw: APIResponse;
   /** Body de la respuesta, ya leído: el JSON parseado si es JSON, el texto si no, `undefined` si viene vacío. */
   readonly body: any;
+  /**
+   * Cookies después de este request: las que se enviaron más las que fijó la respuesta (Set-Cookie),
+   * sin las que la respuesta borró. Se reenvían con `{ cookies: res.cookies }`, también a otro servicio.
+   */
+  readonly cookies: Cookies;
   status(): number;
   headers(): Record<string, string>;
   json<T = any>(): Promise<T>;
@@ -640,6 +648,122 @@ export const vars: Record<string, any> = new Proxy({} as Record<string, any>, {
   getOwnPropertyDescriptor: (_, k) => Reflect.getOwnPropertyDescriptor(varsStore(), k),
 });
 
+/* ---------- cookies ---------- */
+
+export type CookiesInit = Cookies | Record<string, string | number | boolean> | Iterable<readonly [string, string]>;
+
+const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+/** Codifica solo lo que no puede ir en el valor de una cookie; el resto queda tal cual (por ejemplo el `=` de un token base64). */
+const cookieValue = (v: string) => v.replace(/[^\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]/gu, (c) => encodeURIComponent(c));
+
+/**
+ * Cookies de un request o de una respuesta, por nombre. Se pasan tal cual en la opción `cookies` de otro request:
+ *
+ *   const login = await api.post("/login", { data });
+ *   const perfil = await api.get("/perfil", { cookies: login.cookies });
+ */
+export class Cookies implements Iterable<[string, string]> {
+  #map = new Map<string, string>();
+
+  constructor(init?: CookiesInit) {
+    if (init) this.merge(init);
+  }
+
+  /** Suma cookies (otro Cookies, un objeto o pares nombre/valor). Las que ya existen se reemplazan. */
+  merge(init: CookiesInit): this {
+    const entries = init instanceof Cookies ? init.entries() : Symbol.iterator in Object(init) ? (init as Iterable<readonly [string, string]>) : Object.entries(init as Record<string, unknown>);
+    for (const [k, v] of entries) this.set(k, v as string);
+    return this;
+  }
+
+  get(name: string): string | undefined {
+    return this.#map.get(name);
+  }
+  has(name: string): boolean {
+    return this.#map.has(name);
+  }
+  set(name: string, value: string | number | boolean): this {
+    if (!COOKIE_NAME.test(name)) throw new Error(`cookies: "${name}" no es un nombre de cookie válido.`);
+    this.#map.set(name, cookieValue(String(value)));
+    return this;
+  }
+  delete(name: string): boolean {
+    return this.#map.delete(name);
+  }
+  get size(): number {
+    return this.#map.size;
+  }
+  entries(): IterableIterator<[string, string]> {
+    return this.#map.entries();
+  }
+  [Symbol.iterator](): IterableIterator<[string, string]> {
+    return this.#map.entries();
+  }
+  /** Valor del header Cookie: `a=1; b=2`. */
+  toString(): string {
+    return [...this.#map].map(([k, v]) => `${k}=${v}`).join("; ");
+  }
+  toJSON(): Record<string, string> {
+    return Object.fromEntries(this.#map);
+  }
+
+  /** Aplica los headers Set-Cookie de una respuesta: fija las nuevas y borra las vencidas (Max-Age=0 o Expires pasado). */
+  applySetCookie(lines: string[]): this {
+    for (const line of lines) {
+      const [pair, ...attrs] = line.split(";");
+      const eq = pair.indexOf("=");
+      if (eq <= 0) continue;
+      const name = pair.slice(0, eq).trim();
+      if (!COOKIE_NAME.test(name)) continue;
+      let value = pair.slice(eq + 1).trim();
+      if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) value = value.slice(1, -1);
+      const attr = (n: string) => attrs.map((a) => a.trim()).find((a) => a.toLowerCase().startsWith(n + "="))?.slice(n.length + 1);
+      const maxAge = attr("max-age");
+      const expires = attr("expires");
+      const gone = (maxAge != null && Number(maxAge) <= 0) || (maxAge == null && expires != null && Date.parse(expires) <= Date.now());
+      if (gone) this.#map.delete(name);
+      else this.#map.set(name, value);
+    }
+    return this;
+  }
+}
+
+/** Une las cookies del request con un header `cookie` que ya venga en headers (sin importar mayúsculas). */
+export function withCookies(headers: Record<string, string> = {}, cookies?: CookiesInit): Record<string, string> {
+  const jar = cookies ? new Cookies(cookies) : undefined;
+  if (!jar?.size) return headers;
+  const out: Record<string, string> = {};
+  const prev: string[] = [];
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === "cookie") prev.push(v);
+    else out[k] = v;
+  }
+  out.cookie = [...prev, jar.toString()].join("; ");
+  return out;
+}
+
+/** Cookies que lleva un header Cookie (`a=1; b=2`). */
+function parseCookieHeader(value: string | undefined): Array<[string, string]> {
+  if (!value) return [];
+  return value
+    .split(";")
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .flatMap((p): Array<[string, string]> => {
+      const eq = p.indexOf("=");
+      const name = eq > 0 ? p.slice(0, eq).trim() : "";
+      return COOKIE_NAME.test(name) ? [[name, p.slice(eq + 1).trim()]] : [];
+    });
+}
+
+/** Headers Set-Cookie de una respuesta de Playwright (cada uno por separado). */
+function setCookieLines(raw: APIResponse): string[] {
+  const arr = typeof (raw as any).headersArray === "function" ? (raw as any).headersArray() : undefined;
+  if (Array.isArray(arr)) return arr.filter((h: any) => String(h.name).toLowerCase() === "set-cookie").map((h: any) => String(h.value));
+  const joined = raw.headers()["set-cookie"];
+  return joined ? joined.split("\n") : [];
+}
+
 /* ---------- implementación usada por run.ts ---------- */
 
 export interface RecordedCheck {
@@ -665,23 +789,6 @@ export interface ServiceTarget {
 }
 
 export class CaseAbort extends Error {}
-
-/** Une las cookies del request con un header `cookie` que ya venga en headers (sin importar mayúsculas). */
-export function withCookies(headers: Record<string, string> = {}, cookies?: Record<string, string | number | boolean>): Record<string, string> {
-  if (!cookies || !Object.keys(cookies).length) return headers;
-  for (const name of Object.keys(cookies)) {
-    if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name)) throw new Error(`cookies: "${name}" no es un nombre de cookie válido.`);
-  }
-  const pairs = Object.entries(cookies).map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`);
-  const out: Record<string, string> = {};
-  const prev: string[] = [];
-  for (const [k, v] of Object.entries(headers)) {
-    if (k.toLowerCase() === "cookie") prev.push(v);
-    else out[k] = v;
-  }
-  out.cookie = [...prev, ...pairs].join("; ");
-  return out;
-}
 
 /** Codifica un JSON para un header HTTP (los headers no admiten tildes ni ñ). */
 export function encodeHeaderJson(value: unknown): string {
@@ -745,10 +852,11 @@ export function createContext(opts: {
       lastRequestTag = tag;
       lastCaseRequestTag = tag;
       requestTags.push(tag);
+      const reqHeaders = withCookies(o.headers, o.cookies);
       const raw = await ctx.fetch(path.replace(/^\//, ""), {
         method,
         headers: {
-          ...withCookies(o.headers, o.cookies),
+          ...reqHeaders,
           ...runHeader,
           "x-testcase-uc": def.id,
           "x-testcase-step": stepTag,
@@ -771,10 +879,17 @@ export function createContext(opts: {
           /* no era JSON válido: queda el texto */
         }
       }
+      // Las enviadas a mano, con los Set-Cookie aplicados, más las que Playwright guarda para este servicio
+      const cookies = new Cookies(parseCookieHeader(reqHeaders.cookie)).applySetCookie(setCookieLines(raw));
+      if (typeof (ctx as any).storageState === "function") {
+        const state = await ctx.storageState().catch(() => undefined);
+        for (const c of state?.cookies ?? []) cookies.merge([[c.name, c.value]]);
+      }
       return {
         tag,
         raw,
         body,
+        cookies,
         status: () => raw.status(),
         headers: () => raw.headers(),
         json: () => raw.json(),

@@ -32,6 +32,7 @@ import {
   vars,
   when,
   withCookies,
+  Cookies,
   CaseAbort,
   type CaseDefinition,
   type RecordedCheck,
@@ -391,6 +392,37 @@ describe("contexto de un caso", () => {
     assert.equal(h[1].Cookie, undefined, "queda un solo header cookie");
     assert.equal(h[2].cookie, undefined, "sin cookies no se agrega el header");
     assert.throws(() => withCookies({}, { "mal nombre": "x" }), /no es un nombre de cookie válido/);
+  });
+
+  it("la respuesta trae cookies (Cookies) que se reenvían con la opción cookies", async () => {
+    const api = await defineService({ name: "api", endpoint: "https://api.example.com" });
+    let perfilCookies: Cookies | undefined;
+    const def = await defineCase(async () => {
+      await id("UC-06");
+      await title("x");
+      const login = await given("inicia sesión", () => api.post("/login", { cookies: { tema: "oscuro", aviso: "1" } }));
+      const perfil = await when("ve su perfil", () => api.get("/perfil", { cookies: login.cookies }));
+      await then("cierra sesión", async () => {
+        perfilCookies = perfil.cookies;
+        const salir = await api.post("/logout", { cookies: perfil.cookies });
+        assert.deepEqual(salir.cookies.toJSON(), { tema: "oscuro", carrito: "c1" }, "logout borra la sesión");
+      });
+    });
+    await takeDefinedCases();
+    const r = runCase(def, (path) => {
+      const h: Record<string, string> = { "content-type": "application/json" };
+      if (path === "login") h["set-cookie"] = ["sesion=abc==; Path=/; HttpOnly", "aviso=; Max-Age=0"].join("\n");
+      if (path === "perfil") h["set-cookie"] = "carrito=c1; Expires=Wed, 01 Jan 2099 00:00:00 GMT";
+      if (path === "logout") h["set-cookie"] = "sesion=; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      return { headers: h, body: "{}" };
+    });
+    await def.run(r.ctx.t);
+    const sent = r.calls.map((c) => c.opts.headers.cookie);
+    assert.deepEqual(sent, ["tema=oscuro; aviso=1", "tema=oscuro; sesion=abc==", "tema=oscuro; sesion=abc==; carrito=c1"]);
+    assert.ok(perfilCookies instanceof Cookies);
+    assert.equal(perfilCookies!.get("sesion"), "abc==", "el = del valor no se codifica");
+    assert.equal(perfilCookies!.has("aviso"), false, "Max-Age=0 la borra");
+    assert.equal(String(perfilCookies), "tema=oscuro; sesion=abc==; carrito=c1");
   });
 
   it("body: JSON parseado, texto si no es JSON, undefined si viene vacío", async () => {
