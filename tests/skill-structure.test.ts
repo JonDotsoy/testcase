@@ -27,7 +27,7 @@ describe("SKILL.md", () => {
 
   it("documenta cada script y cada utilidad que exporta testcase.ts para los casos", () => {
     for (const f of readdirSync(SCRIPTS)) assert.ok(skillMd.includes(`scripts/${f}`), `SKILL.md no menciona scripts/${f}`);
-    for (const name of ["defineCase", "title", "id", "given", "when", "then", "defineService", "fromEnv", "sensitive", "notation", "check", "ensure", "page", "vars"])
+    for (const name of ["defineCase", "title", "describe", "id", "given", "when", "then", "defineService", "fromEnv", "sensitive", "notation", "check", "ensure", "page", "vars"])
       assert.match(skillMd, new RegExp(`\\b${name}\\b`), `SKILL.md no menciona ${name}`);
   });
 

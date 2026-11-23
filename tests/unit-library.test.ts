@@ -13,6 +13,7 @@ import {
   declaredServices,
   defineCase,
   defineService,
+  describe as describeCase,
   isHttpService,
   serviceKind,
   encodeHeaderJson,
@@ -75,6 +76,7 @@ describe("defineCase", () => {
     const def = await defineCase(async () => {
       await id("UC-10");
       await title(() => "Título " + "calculado");
+      await describeCase("  Contexto del caso: por qué importa.  ");
       const pedido = await given("un pedido", async () => ((ran = true), { id: "ord_1" }));
       // Al registrar, el valor de un paso acepta propiedades y llamadas sin fallar
       const ruta = `/v1/orders/${pedido.id}`;
@@ -85,6 +87,7 @@ describe("defineCase", () => {
     assert.equal(ran, false, "los pasos no corren al registrar");
     assert.equal(def.id, "UC-10");
     assert.equal(def.title, "Título calculado");
+    assert.equal(def.description, "Contexto del caso: por qué importa.");
     assert.equal(def.given, "un pedido");
     assert.equal(def.then, "responde 403 y el pedido sigue pending");
     assert.deepEqual(
@@ -119,6 +122,8 @@ describe("defineCase", () => {
     ["sin then", async () => (await title("x"), await given("a"), await when("b")), /falta al menos un then\(\)/],
     ["title dos veces", async () => (await title("x"), await title("y")), /una sola vez/],
     ["title vacío", () => title("  "), /texto no vacío/],
+    ["describe dos veces", async () => (await title("x"), await describeCase("a"), await describeCase("b")), /describe\(\) se declara una sola vez/],
+    ["describe vacío", () => describeCase(""), /texto no vacío/],
     ["defineCase anidado", () => defineCase(async () => {}), /no se puede anidar/],
     ["paso con segundo argumento inválido", async () => (await title("x"), await given("a", "no" as any)), /debe ser una función/],
     ["request fuera de un paso", async () => (await title("x"), page()), /solo funciona dentro de un paso/],

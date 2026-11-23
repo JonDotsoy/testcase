@@ -15,7 +15,7 @@
  *     await then("la API responde 403", () => check("status == 403", res.status(), 403, { expectedFailure: true }));
  *   });
  *
- * Todo se usa con await: defineCase, title, id, given, when y then. Al cargar el archivo, defineCase recorre su función
+ * Todo se usa con await: defineCase, title, describe, id, given, when y then. Al cargar el archivo, defineCase recorre su función
  * sin ejecutar los pasos para registrar el título y los pasos. Al correr el caso la ejecuta de nuevo: cada paso corre
  * en orden y `await given(…)` devuelve lo que devuelve su función. Dentro de un paso se usan las utilidades importadas
  * (`check`, `ensure`, `notation`, `page`, `vars`) y los métodos de sus servicios.
@@ -107,6 +107,8 @@ export interface CaseDefinition {
   /** Id estable del caso: UC-01, UC-02… */
   id: string;
   title: string;
+  /** Descripción del caso, más larga que el título: contexto, reglas de negocio, por qué importa. */
+  description?: string;
   given: string;
   when: string;
   then: string;
@@ -121,6 +123,7 @@ export interface CaseDefinition {
 interface Draft {
   id?: string;
   title?: string;
+  description?: string;
   annotations: Annotations;
   steps: CaseStep[];
   /** `vars` mientras se registran los pasos. */
@@ -197,6 +200,7 @@ export function defineCase(body: () => unknown | Promise<unknown>): Promise<Case
     const def: CaseDefinition = {
       id: d.id ?? "",
       title: d.title,
+      ...(d.description ? { description: d.description } : {}),
       given: join("given"),
       when: join("when"),
       then: join("then"),
@@ -234,6 +238,17 @@ export async function title(value: Text): Promise<void> {
   if (!d) return;
   if (d.title) throw new Error("title() se declara una sola vez por caso.");
   d.title = text(value, "title");
+}
+
+/**
+ * Descripción del caso, más larga que el título: el contexto, la regla de negocio o por qué importa.
+ * Opcional, una vez por caso. Acepta un texto o una función que lo devuelve. Aparece en el reporte bajo el título.
+ */
+export async function describe(value: Text): Promise<void> {
+  const { d } = draftOrRun("describe");
+  if (!d) return;
+  if (d.description) throw new Error("describe() se declara una sola vez por caso.");
+  d.description = text(value, "describe");
 }
 
 /** Id del caso (UC-NN). Opcional: por defecto sale del nombre del archivo. */

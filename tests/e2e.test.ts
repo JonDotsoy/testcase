@@ -94,13 +94,14 @@ describe("flujo completo", { skip: chromiumError ?? false, timeout: 300_000 }, (
     proxyPort = await new Promise<number>((ok) => probe.listen(0, "127.0.0.1", () => ok((probe.address() as AddressInfo).port)));
     await new Promise((ok) => probe.close(ok));
 
-    const header = `import { defineCase, defineService, sensitive, id, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";
+    const header = `import { defineCase, defineService, sensitive, id, title, describe, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";
 export const api = await defineService({ name: "api", endpoint: "http://127.0.0.1:${apiPort}", health: "GET /healthz" });
 `;
     p = project({
       "UC-01.case.ts": `${header}
 await defineCase(async () => {
   await title("Cliente no puede cancelar un pedido ajeno");
+  await describe("Un cliente solo cancela sus propios pedidos.");
   notation("tenant", "tienda-norte");
 
   const token = await given("un pedido creado por María", async () => {
@@ -196,6 +197,8 @@ await defineCase(async () => {
     assert.equal(rep.run.number, 2);
     assert.deepEqual(rep.useCases.map((u: any) => u.id), ["UC-01", "UC-02", "UC-03"]);
     assert.equal(rep.useCases[1].handler.file, "cases/propios.case.ts");
+    assert.equal(rep.useCases[0].description, "Un cliente solo cancela sus propios pedidos.");
+    assert.equal(rep.useCases[1].description, undefined, "sin describe() no hay description");
     const sens = join(p.tc, "run-sensitive.json");
     assert.equal(statSync(sens).mode & 0o777, 0o600);
     assert.deepEqual(readJson(sens).values.sort(), [PASSWORD, TOKEN].sort());
@@ -312,6 +315,7 @@ describe("report.html en el navegador", { skip: chromiumError ?? false, timeout:
       const example = readJson(json);
       const text = await page.locator("body").innerText();
       for (const uc of example.useCases) assert.ok(text.includes(uc.title), `no se ve "${uc.title}"`);
+      for (const uc of example.useCases.filter((u: any) => u.description)) assert.ok(text.includes(uc.description), `no se ve la descripción de ${uc.id}`);
       assert.deepEqual(errors, []);
     } finally {
       await browser.close();

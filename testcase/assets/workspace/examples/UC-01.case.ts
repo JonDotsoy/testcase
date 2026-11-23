@@ -1,6 +1,6 @@
 // Ejemplo: copia este archivo a cases/ y ajústalo. Un archivo por caso de uso; el id sale del nombre (UC-01).
 // El script es autocontenido: importa lo que usa y declara sus servicios.
-import { defineCase, defineService, fromEnv, sensitive, title, given, when, then, notation, check, ensure, between, page } from "../testcase.ts";
+import { defineCase, defineService, fromEnv, sensitive, title, describe, given, when, then, notation, check, ensure, between, page } from "../testcase.ts";
 
 // Servicio URL que ya existe: sus requests pasan por el proxy de evidencia.
 const api = await defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
@@ -32,6 +32,7 @@ const pedidos = await defineService({
 
 await defineCase(async () => {
   await title(() => "Cliente no puede cancelar un pedido ajeno");
+  await describe("Un cliente solo puede cancelar sus propios pedidos. La API rechaza la cancelación y el pedido no cambia.");
   notation("tenant", "tienda-norte"); // anotación de todo el caso
   notation("db", db.name);
   notation("backend", pedidos.name);

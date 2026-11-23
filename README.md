@@ -45,12 +45,13 @@ persona: describe los casos
 Cada script es autocontenido: declara sus servicios y sus casos. Todo se usa con `await`, y cada paso devuelve lo que devuelve su función.
 
 ```ts
-import { defineCase, defineService, sensitive, title, given, when, then, notation, check, ensure, between } from "../testcase.ts";
+import { defineCase, defineService, sensitive, title, describe, given, when, then, notation, check, ensure, between } from "../testcase.ts";
 
 const api = await defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
 
 await defineCase(async () => {
   await title("Cliente no puede cancelar un pedido ajeno");
+  await describe("Un cliente solo puede cancelar sus propios pedidos. La API rechaza la cancelación y el pedido no cambia.");
 
   const token = await given("Pedro inició sesión", async () => {
     const login = await api.post("/v1/auth/token", { data: { email: "pedro@acme.test", password: sensitive(process.env.PEDRO_PASSWORD) } });

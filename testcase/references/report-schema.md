@@ -90,6 +90,7 @@ report
 |---|---|---|---|
 | `id` | string `UC-NN` | sí | Id estable del caso de uso. |
 | `title` | string | sí | Título que aparece en el manifiesto. |
+| `description` | string | no | Descripción más larga que el título: contexto, regla de negocio o por qué importa. La declara `describe()` en el caso. |
 | `status` | `passed` \| `failed` \| `pending` | sí | `pending` indica que el handler todavía no está implementado. |
 | `given` / `when` / `then` | string | sí | Texto del manifiesto, sin cambios. |
 | `handler` | `{ file, line? }` | sí | Archivo TypeScript del handler. |
@@ -1265,6 +1266,10 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
         },
         "title": {
           "type": "string"
+        },
+        "description": {
+          "type": "string",
+          "description": "Descripción del caso (describe() en el script)."
         },
         "status": {
           "enum": [
