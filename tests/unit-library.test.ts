@@ -378,12 +378,14 @@ describe("contexto de un caso", () => {
     const ran: string[] = [];
     const api = await defineService({ name: "api", endpoint: "https://api.example.com" });
     let saltado: unknown = "sin tocar";
+    const registrado: unknown[] = [];
     const def = await defineCase(async () => {
       await id("UC-09");
       await title("x");
       await given("un pedido", () => (ran.push("given"), api.get("/pedido")));
       await given.skip(Promise.resolve("un buzón de prueba"), () => ran.push("given.skip"));
       saltado = await when.skip("se envía el correo", () => (ran.push("when.skip"), api.post("/correo")));
+      registrado.push(saltado);
       await when("se cancela", () => ran.push("when"));
       await then.skip("llega el correo", () => ran.push("then.skip"));
       await then("responde 403", () => ran.push("then"));
@@ -404,7 +406,8 @@ describe("contexto de un caso", () => {
     const r = runCase(def);
     await def.run(r.ctx.t);
     assert.deepEqual(ran, ["given", "when", "then"]);
-    assert.equal(saltado, undefined, "un paso saltado devuelve undefined al correr");
+    assert.deepEqual(registrado, [null, null], "un paso saltado devuelve null al registrar y al correr");
+    assert.equal(saltado, null);
     assert.deepEqual(r.calls.map((c) => c.path), ["pedido"], "no hace sus requests");
     assert.throws(() => then.skip("x"), /then.skip\(\) solo se usa dentro de defineCase/);
   });

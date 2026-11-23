@@ -293,7 +293,7 @@ function runStep<T>(paso: Paso, description: Text, fn?: StepFn<T>, skip = false)
     // El lugar del paso se reserva ya, para conservar el orden aunque el texto sea una promesa
     const step: CaseStep = { paso, description: quick, ...(skip ? { skipped: true as const } : {}) };
     d.steps.push(step);
-    const p = text(description, name).then((desc) => ((step.description = desc), placeholder as T));
+    const p = text(description, name).then((desc) => ((step.description = desc), (skip ? null : placeholder) as T));
     d.pending.push(p);
     p.catch(() => {}); // defineCase lo informa
     return p;
@@ -302,7 +302,7 @@ function runStep<T>(paso: Paso, description: Text, fn?: StepFn<T>, skip = false)
   const p = (async () => {
     try {
       const desc = await text(description, name);
-      if (skip) return undefined as T; // saltado: no corre su función ni hace requests
+      if (skip) return null as T; // saltado: no corre su función ni hace requests
       const label = `${paso}("${desc}")`;
       r!.step = label;
       const t = r!.t;
@@ -334,13 +334,14 @@ export function then<T = void>(description: Text, fn?: StepFn<T>): Promise<T> {
 /**
  * Paso saltado: `given.skip()`, `when.skip()` y `then.skip()` reciben lo mismo que el paso, pero no lo ejecutan.
  * El paso sigue en el caso (su texto queda en given/when/then del reporte) y el caso queda pendiente
- * con los pasos saltados, salvo que otro paso falle. Devuelve `undefined`: si otro paso usa su valor, sáltalo también.
+ * con los pasos saltados, salvo que otro paso falle. Devuelve siempre `null`, también al registrar los pasos:
+ * si otro paso usa su valor, sáltalo también.
  *
  *   await then.skip("el correo de confirmación llega", async () => …); // todavía no hay buzón de prueba
  */
-given.skip = <T = void>(description: Text, fn?: StepFn<T>): Promise<undefined> => runStep("given", description, fn, true) as Promise<undefined>;
-when.skip = <T = void>(description: Text, fn?: StepFn<T>): Promise<undefined> => runStep("when", description, fn, true) as Promise<undefined>;
-then.skip = <T = void>(description: Text, fn?: StepFn<T>): Promise<undefined> => runStep("then", description, fn, true) as Promise<undefined>;
+given.skip = <T = void>(description: Text, fn?: StepFn<T>): Promise<null> => runStep("given", description, fn, true) as Promise<null>;
+when.skip = <T = void>(description: Text, fn?: StepFn<T>): Promise<null> => runStep("when", description, fn, true) as Promise<null>;
+then.skip = <T = void>(description: Text, fn?: StepFn<T>): Promise<null> => runStep("then", description, fn, true) as Promise<null>;
 
 /* ---------- servicios: defineService ---------- */
 
