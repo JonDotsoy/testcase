@@ -391,7 +391,7 @@ const svcOf = r=>r.services;
 
 const SERVICES = REPORT.services.map(s=>{
   if(s.mode==="provisioned"){
-    const env = (s.env||[]).map(e=>e.source==="service-ref"?`${e.name} → ${e.value}`:e.sensitive?`${e.name}${ENV_SRC[e.source]||""}`:`${e.name}=${e.value}`).join(", ") || "sin variables";
+    const env = (s.env||[]).map(e=>e.source==="service-ref"?`${e.name} → ${e.value}`:e.sensitive?`${e.name}${e.envFile?" ← "+e.envFile:ENV_SRC[e.source]||""}`:`${e.name}=${e.value}`).join(", ") || "sin variables";
     const up = REPORT.timeline.find(t=>t.kind==="service.up" && t.ref===s.name) || {startOffsetMs:0, durationMs:s.health.durationMs};
     const extra = s.storage ? ["almacenamiento", s.storage==="tmpfs"?"tmpfs, se descarta al terminar":s.storage] : s.dependsOn&&s.dependsOn.length ? ["depende de", s.dependsOn.join(", ")] : null;
     return {name:s.name, mode:"prov", origin:s.image, endpoint:(s.ports||[]).some(p=>p.host!==p.container)?s.ports.map(p=>`localhost:${p.host} → ${p.container}`).join(", "):s.endpoint,
@@ -399,7 +399,7 @@ const SERVICES = REPORT.services.map(s=>{
       ready:s.readyMs, proxy:s.proxy, arts:s.artifacts.map(a=>({k:ART_LABEL[a.kind]||a.kind, src:a.source, d:a.description||"", start:a.startOffsetMs, end:a.startOffsetMs+a.durationMs}))};
   }
   if(s.mode==="process"){
-    const env = (s.env||[]).map(e=>e.sensitive?`${e.name}${e.fromEnv?" ← $"+e.fromEnv:""}`:`${e.name}=${e.value}`).join(", ") || "sin variables";
+    const env = (s.env||[]).map(e=>e.sensitive?`${e.name}${e.envFile?" ← "+e.envFile:e.fromEnv?" ← $"+e.fromEnv:""}`:`${e.name}=${e.value}`).join(", ") || "sin variables";
     const up = REPORT.timeline.find(t=>t.kind==="service.up" && t.ref===s.name) || {startOffsetMs:0, durationMs:s.readyMs||s.health.durationMs};
     const pr = s.process;
     return {name:s.name, mode:"proc", origin:s.command, endpoint:s.endpoint, health:`${s.health.check} · ${fmtMs(s.health.durationMs)}`, env,

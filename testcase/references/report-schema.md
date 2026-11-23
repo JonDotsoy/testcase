@@ -205,7 +205,7 @@ Campos de `provisioned`:
 | `image` | string | sí | Imagen de Podman con su tag. Si se construyó, el nombre que quedó (por ejemplo `localhost/testcase-pedidos-svc:latest`). |
 | `build` | `{ context, dockerfile? }` | no | La imagen se construyó desde un Dockerfile del proyecto. |
 | `ports` | `{ host, container, protocol? }[]` | no | Puertos publicados. |
-| `env` | `{ name, source, value?, sensitive?, secretRef?, fromEnv? }[]` | no | Origen de cada variable: `manifest`, `env-file`, `inferred` (credenciales inferidas para imágenes conocidas) o `service-ref`. |
+| `env` | `{ name, source, value?, sensitive?, secretRef?, fromEnv?, envFile? }[]` | no | Origen de cada variable: `manifest`, `env-file` (con `envFile`, la ruta del archivo `.env` que declaró `fromEnvFile`), `inferred` (credenciales inferidas para imágenes conocidas) o `service-ref`. |
 | `dependsOn` | string[] | no | Servicios que deben estar listos antes. |
 | `storage` | `tmpfs` \| `volume` \| `none` | no | Almacenamiento del contenedor. |
 | `readyMs` | number | no | Tiempo hasta quedar listo, con los artefactos aplicados. |
@@ -1788,6 +1788,10 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
                   "fromEnv": {
                     "type": "string",
                     "description": "Variable del entorno de la que sale el valor (fromEnv en defineService)."
+                  },
+                  "envFile": {
+                    "type": "string",
+                    "description": "Archivo .env del que sale el valor (fromEnvFile en defineService), relativo a la raíz del proyecto."
                   }
                 }
               }
@@ -1920,6 +1924,10 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
                   "fromEnv": {
                     "type": "string",
                     "description": "Variable del entorno de la que sale el valor (fromEnv en defineService)."
+                  },
+                  "envFile": {
+                    "type": "string",
+                    "description": "Archivo .env del que sale el valor (fromEnvFile en defineService), relativo a la raíz del proyecto."
                   }
                 }
               }

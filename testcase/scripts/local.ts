@@ -32,6 +32,30 @@ import { dirname, join, resolve } from "node:path";
 
 type Json = any;
 
+
+/** Lee un archivo .env: `CLAVE=valor`, comentarios con #, `export` opcional, comillas simples o dobles. Igual que en testcase.ts. */
+function parseEnvFile(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=\s*(.*)$/.exec(line);
+    if (!m) continue;
+    let v = m[2];
+    if (v.startsWith('"')) {
+      const end = v.indexOf('"', 1);
+      v = (end > 0 ? v.slice(1, end) : v.slice(1)).replace(/\\n/g, "\n").replace(/\\"/g, '"');
+    } else if (v.startsWith("'")) {
+      const end = v.indexOf("'", 1);
+      v = end > 0 ? v.slice(1, end) : v.slice(1);
+    } else {
+      v = v.replace(/\s+#.*$/, "").trim();
+    }
+    out[m[1]] = v;
+  }
+  return out;
+}
+
 const args = process.argv.slice(2);
 const flag = (name: string) => {
   const i = args.indexOf(name);
@@ -172,9 +196,20 @@ async function up() {
   const plan = JSON.parse(readFileSync(localPath, "utf8"));
   const projectRoot = resolve(reportDir, plan.projectRoot ?? "..");
 
-  // Variables: se revisan todas antes de levantar nada
+  // Variables: se revisan todas antes de levantar nada. Las de fromEnvFile salen de su archivo .env
+  const envFiles = new Map<string, Record<string, string>>();
+  const fileVars = (f: string) => {
+    if (!envFiles.has(f)) {
+      const path = resolve(projectRoot, f);
+      if (!existsSync(path)) fail(`no existe el archivo de variables ${path} (fromEnvFile("${f}")).`);
+      envFiles.set(f, parseEnvFile(readFileSync(path, "utf8")));
+    }
+    return envFiles.get(f)!;
+  };
+  const envValue = (v: any): string | undefined => (typeof v === "string" ? v : v.envFile ? fileVars(v.envFile)[v.fromEnv] : process.env[v.fromEnv]);
   const missing = new Set<string>();
-  for (const s of plan.services) for (const v of Object.values<any>(s.env ?? {})) if (typeof v === "object" && process.env[v.fromEnv] == null) missing.add(v.fromEnv);
+  for (const s of plan.services)
+    for (const v of Object.values<any>(s.env ?? {})) if (typeof v === "object" && envValue(v) == null) missing.add(v.envFile ? `${v.fromEnv} (en ${v.envFile})` : v.fromEnv);
   if (missing.size) fail(`faltan variables de entorno: ${[...missing].join(", ")}`);
 
   for (const p of plan.proxies) if (await portOpen(p.port)) fail(`el puerto ${p.port} del proxy de ${p.service} ya está en uso. Libéralo o corre cases.ts --plan otra vez.`);
@@ -192,7 +227,7 @@ async function up() {
   for (const s of plan.services) {
     const cwd = resolve(projectRoot, s.cwd ?? ".");
     if (!existsSync(cwd)) await abort(`la carpeta de ${s.name} no existe: ${cwd}`);
-    const env = { ...process.env, ...Object.fromEntries(Object.entries<any>(s.env ?? {}).map(([k, v]) => [k, typeof v === "string" ? v : process.env[v.fromEnv]])) };
+    const env = { ...process.env, ...Object.fromEntries(Object.entries<any>(s.env ?? {}).map(([k, v]) => [k, envValue(v)])) };
     const log = join(reportDir, s.log);
     const t0 = Date.now();
     const pid = start(s.command, [], { cwd, env, log, shell: true });

@@ -152,7 +152,7 @@ export function project(cases: Record<string, string>, opts: { report?: any } = 
 
 /** Script de caso mínimo. */
 export const caseSource = (body: string, header = "") =>
-  `import { defineCase, defineService, fromEnv, sensitive, id, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";\n${header}\n${body}\n`;
+  `import { defineCase, defineService, fromEnv, fromEnvFile, sensitive, id, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";\n${header}\n${body}\n`;
 
 export function hasCommand(cmd: string, args = ["--version"]): boolean {
   return spawnSync(cmd, args, { stdio: "ignore" }).status === 0;

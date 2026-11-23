@@ -3,7 +3,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { caseSource, CASES, hasCommand, project, runScript, tempDir, WORKSPACE } from "./helpers.ts";
@@ -229,6 +229,33 @@ describe("run.ts --plan", () => {
       assert.match(r.out, /cache: storage tmpfs sin ruta/);
       assert.doesNotMatch(r.out, /up -d --build/);
       assert.match(compose, /Proxies de evidencia: ninguno/);
+    } finally {
+      p.cleanup();
+    }
+  });
+
+  it("fromEnvFile pasa a env_file en compose.yaml y queda como env-file en el reporte", () => {
+    const p = project({
+      "UC-01.case.ts": withServices(`await defineService({ name: "db", image: "postgres:16", env: { ...fromEnvFile("config/db.env", { only: ["PGPASSWORD"] }), PGUSER: "app" } });`),
+    });
+    try {
+      mkdirSync(join(p.dir, "config"));
+      writeFileSync(join(p.dir, "config", "db.env"), "PGPASSWORD='s3cr#to'\nOTRA=1\n");
+      const r = p.cases(["--plan"]);
+      assert.equal(r.code, 0, r.out);
+      const compose = readFileSync(join(p.tc, "compose.yaml"), "utf8");
+      assert.match(compose, /env_file:\n\s+- "\.\.\/config\/db\.env"/);
+      assert.doesNotMatch(compose, /PGPASSWORD|s3cr#to/);
+      assert.match(compose, /PGUSER: "app"/);
+      const db = p.report().services.find((s: any) => s.name === "db");
+      assert.deepEqual(db.env, [
+        { name: "PGPASSWORD", source: "env-file", value: "••••", sensitive: true, envFile: "config/db.env" },
+        { name: "PGUSER", source: "manifest", value: "app" },
+      ]);
+      rmSync(join(p.dir, "config", "db.env"));
+      const sin = p.cases(["--plan"]);
+      assert.equal(sin.code, 1);
+      assert.match(sin.out, /fromEnvFile\("config\/db\.env"\): no existe/);
     } finally {
       p.cleanup();
     }

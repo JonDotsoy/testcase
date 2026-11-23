@@ -27,6 +27,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { readFileSync } from "node:fs";
+import { relative as relativePath, resolve as resolvePath } from "node:path";
 import type { APIRequestContext, APIResponse, Browser, BrowserContext, Page } from "playwright";
 
 export type Paso = "given" | "when" | "then";
@@ -332,11 +334,67 @@ export function then<T = void>(description: Text, fn?: StepFn<T>): Promise<T> {
 /** Variable de entorno con un secreto. En el reporte queda enmascarada. */
 export interface FromEnv {
   fromEnv: string;
+  /** Archivo .env del que sale el valor (fromEnvFile), relativo a la raíz del proyecto. */
+  envFile?: string;
 }
 /** Lee el valor de una variable de entorno del host al levantar el servicio. Se marca como sensible. */
 export function fromEnv(name: string): FromEnv {
   sensitive(process.env[name]);
   return { fromEnv: name };
+}
+
+/** Lee un archivo .env: `CLAVE=valor`, comentarios con #, `export` opcional, comillas simples o dobles (con \\n en las dobles). */
+export function parseEnvFile(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=\s*(.*)$/.exec(line);
+    if (!m) continue;
+    let v = m[2];
+    if (v.startsWith('"')) {
+      const end = v.indexOf('"', 1);
+      v = (end > 0 ? v.slice(1, end) : v.slice(1)).replace(/\\n/g, "\n").replace(/\\"/g, '"');
+    } else if (v.startsWith("'")) {
+      const end = v.indexOf("'", 1);
+      v = end > 0 ? v.slice(1, end) : v.slice(1);
+    } else {
+      v = v.replace(/\s+#.*$/, "").trim();
+    }
+    out[m[1]] = v;
+  }
+  return out;
+}
+
+/**
+ * Carga las variables de un archivo `.env` del proyecto para el `env` de un servicio. La ruta es relativa a la raíz
+ * del proyecto. Todas quedan como sensibles: en el reporte se ven enmascaradas y su valor no se escribe en compose.yaml
+ * ni en local.json; se lee del archivo al levantar el servicio.
+ *
+ *   env: { ...fromEnvFile(".env.test"), LOG_LEVEL: "debug" }
+ *   env: fromEnvFile("config/db.env", { only: ["PGUSER", "PGPASSWORD"] })
+ */
+export function fromEnvFile(path: string, opts: { only?: string[] } = {}): Record<string, FromEnv> {
+  if (typeof path !== "string" || !path.trim()) throw new Error("fromEnvFile() necesita la ruta del archivo .env.");
+  const root = process.env.TESTCASE_PROJECT_ROOT ?? process.cwd();
+  const file = resolvePath(root, path);
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    throw new Error(`fromEnvFile("${path}"): no existe ${file}. La ruta es relativa a la raíz del proyecto.`);
+  }
+  const vars = parseEnvFile(text);
+  const keys = opts.only ?? Object.keys(vars);
+  const missing = keys.filter((k) => !(k in vars));
+  if (missing.length) throw new Error(`fromEnvFile("${path}"): el archivo no define ${missing.join(", ")}.`);
+  const rel = relativePath(root, file) || path;
+  return Object.fromEntries(
+    keys.map((k) => {
+      sensitive(vars[k] || undefined);
+      return [k, { fromEnv: k, envFile: rel }];
+    }),
+  );
 }
 
 export interface ArtifactDefinition {
