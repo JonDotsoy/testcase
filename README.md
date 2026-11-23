@@ -18,14 +18,14 @@ bunx skills add JonDotsoy/testcase
 
 - `testcase/SKILL.md`: flujo de trabajo de la skill.
 - `testcase/references/report-schema.md`: schema del reporte JSON.
-- `testcase/scripts/`: `cases.ts` (ejecuta los `*.case.ts` en un espacio temporal con Playwright), `import-har.ts` (evidencia del proxy), `sync-report.ts` (campos derivados) y `render-report.ts` (HTML).
+- `testcase/scripts/`: `cases.ts` (ejecuta los `*.case.ts` en un espacio temporal con Playwright), `local.ts` (levanta y detiene procesos locales y proxies sin contenedor), `proxy.ts` (proxy de evidencia local que escribe el HAR), `import-har.ts` (evidencia del proxy), `sync-report.ts` (campos derivados) y `render-report.ts` (HTML).
 - `testcase/assets/`: plantilla HTML, JSON inicial y un reporte de ejemplo.
 
 Los scripts no tienen dependencias y corren con `bun` o con Node 22.6 o superior.
 
 ## Pruebas
 
-Las pruebas validan toda la skill: la librería de los casos (`testcase.ts`), `run.ts --plan` y el `compose.yaml` que genera, `cases.ts`, `import-har.ts`, `sync-report.ts`, `render-report.ts`, el schema del reporte y un flujo completo con Playwright, un servidor de prueba y un proxy que graba el HAR como mitmdump.
+Las pruebas validan toda la skill: la librería de los casos (`testcase.ts`), `run.ts --plan` y el `compose.yaml` que genera, `cases.ts`, `import-har.ts`, `sync-report.ts`, `render-report.ts`, el schema del reporte, los procesos locales y el proxy sin contenedor (`local.ts`, `proxy.ts`), y un flujo completo con Playwright, un servidor de prueba y el proxy local.
 
 ```sh
 npm install                          # o bun install

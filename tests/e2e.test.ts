@@ -1,17 +1,17 @@
 /**
  * Flujo completo de la skill, como lo sigue el agente:
  *
- *   cases.ts --plan → (proxy de evidencia) → cases.ts → import-har → sync-report → render-report
+ *   cases.ts --plan --proxy local → local.ts up → cases.ts → local.ts down → import-har → sync-report → render-report
  *
- * En vez de Podman y mitmdump usa, en el mismo proceso, un servidor de prueba y un proxy inverso que escribe el
- * HAR con la forma de mitmdump al detenerse. Los casos corren con Playwright y Chromium de verdad.
+ * El servicio es un servidor de prueba en este proceso; el proxy de evidencia es scripts/proxy.ts, levantado por
+ * local.ts, sin contenedores. Los casos corren con Playwright y Chromium de verdad.
  * Se omite si Chromium no está instalado (npx playwright install chromium).
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer as netServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { CASES, project, readJson, SCRIPTS, validateReport, writeJson } from "./helpers.ts";
@@ -60,61 +60,6 @@ function upstream(): Server {
   });
 }
 
-/** Proxy inverso que guarda cada intercambio y escribe un HAR (como mitmdump --set hardump=…) al detenerse. */
-function recordingProxy(target: string) {
-  const entries: any[] = [];
-  const server = createServer(async (req, res) => {
-    const started = new Date();
-    const reqBody = await readBody(req);
-    const headers = { ...req.headers };
-    delete headers.host;
-    const up = httpRequest(new URL(req.url ?? "/", target), { method: req.method, headers }, async (ures) => {
-      const resBody = await readBody(ures);
-      const time = Date.now() - started.getTime();
-      const pairs = (raw: string[]) => raw.reduce<any[]>((acc, v, i) => (i % 2 ? acc : [...acc, { name: v, value: raw[i + 1] }]), []);
-      const mime = String(ures.headers["content-type"] ?? "");
-      entries.push({
-        startedDateTime: started.toISOString(),
-        time,
-        request: {
-          method: req.method,
-          url: `http://${req.headers.host}${req.url}`,
-          httpVersion: "HTTP/1.1",
-          headers: pairs(req.rawHeaders),
-          queryString: [],
-          ...(reqBody ? { postData: { mimeType: String(req.headers["content-type"] ?? ""), text: reqBody } } : {}),
-        },
-        response: {
-          status: ures.statusCode,
-          statusText: ures.statusMessage ?? "",
-          httpVersion: "HTTP/1.1",
-          headers: pairs(ures.rawHeaders),
-          content: { size: Buffer.byteLength(resBody), mimeType: mime, text: resBody },
-        },
-        timings: { send: 0, wait: time, receive: 0 },
-      });
-      res.writeHead(ures.statusCode ?? 502, ures.headers);
-      res.end(resBody);
-    });
-    up.on("error", () => {
-      res.writeHead(502);
-      res.end();
-    });
-    up.end(reqBody);
-  });
-  return {
-    server,
-    stop: (harFile: string) =>
-      new Promise<void>((done) => {
-        server.close(() => {
-          writeFileSync(harFile, JSON.stringify({ log: { version: "1.2", creator: { name: "mitmproxy", version: "11.0.2" }, entries } }));
-          done();
-        });
-        server.closeAllConnections();
-      }),
-  };
-}
-
 const readBody = (m: IncomingMessage) =>
   new Promise<string>((ok) => {
     const chunks: Buffer[] = [];
@@ -137,7 +82,6 @@ function runAsync(script: string, args: string[], opts: { cwd: string; env?: Rec
 
 describe("flujo completo", { skip: chromiumError ?? false, timeout: 300_000 }, () => {
   let api: Server;
-  let proxy: ReturnType<typeof recordingProxy>;
   let p: ReturnType<typeof project>;
   let apiPort: number;
   let proxyPort: number;
@@ -145,8 +89,10 @@ describe("flujo completo", { skip: chromiumError ?? false, timeout: 300_000 }, (
   before(async () => {
     api = upstream();
     apiPort = await listen(api);
-    proxy = recordingProxy(`http://127.0.0.1:${apiPort}`);
-    proxyPort = await listen(proxy.server);
+    // Un puerto libre para el proxy
+    const probe = netServer();
+    proxyPort = await new Promise<number>((ok) => probe.listen(0, "127.0.0.1", () => ok((probe.address() as AddressInfo).port)));
+    await new Promise((ok) => probe.close(ok));
 
     const header = `import { defineCase, defineService, sensitive, id, title, given, when, then, notation, check, ensure, page, vars } from "../testcase.ts";
 export const api = defineService({ name: "api", endpoint: "http://127.0.0.1:${apiPort}", health: "GET /healthz" });
@@ -218,20 +164,26 @@ defineCase(() => {
 
   after(async () => {
     await new Promise((ok) => api?.close(ok));
-    proxy?.server.close();
+    if (p) await runAsync(join(SCRIPTS, "local.ts"), ["down", "--report", p.reportFile], { cwd: p.dir });
     p?.cleanup();
   });
 
   const run = (args: string[]) => runAsync(CASES, ["--report", p.reportFile, "--workspace", p.ws, "--skip-install", ...args], { cwd: p.dir, env: { E2E_PASSWORD: PASSWORD } });
 
-  it("--plan registra el servicio y su proxy", async () => {
-    const r = await run(["--plan"]);
+  const local = (cmd: string) => runAsync(join(SCRIPTS, "local.ts"), [cmd, "--report", p.reportFile], { cwd: p.dir });
+
+  it("--plan --proxy local registra el servicio y su proxy local, y local.ts lo levanta", async () => {
+    const r = await run(["--plan", "--proxy", "local"]);
     assert.equal(r.code, 0, r.out);
     const svc = p.report().services[0];
     assert.equal(svc.endpoint, `http://127.0.0.1:${apiPort}`);
-    assert.equal(svc.proxy.listen, `http://localhost:${proxyPort}`);
+    assert.equal(svc.proxy.engine, "local");
+    assert.equal(svc.proxy.listen, `http://127.0.0.1:${proxyPort}`, "conserva el puerto que ya tenía");
     assert.equal(svc.proxy.upstream, `http://127.0.0.1:${apiPort}`);
-    assert.ok(existsSync(join(p.tc, "compose.yaml")));
+    assert.ok(!existsSync(join(p.tc, "compose.yaml")), "sin contenedores no hay compose.yaml");
+    const up = await local("up");
+    assert.equal(up.code, 0, up.out);
+    assert.ok(p.report().services[0].proxy.pid > 0);
   });
 
   let runOut = "";
@@ -266,7 +218,9 @@ defineCase(() => {
 
   it("importa la evidencia, sincroniza y genera el HTML sin valores sensibles", async () => {
     const har = join(p.tc, "evidence", "api.har");
-    await proxy.stop(har);
+    const down = await local("down");
+    assert.equal(down.code, 0, down.out);
+    assert.match(down.out, /proxy-api: pid \d+ detenido \(SIGTERM\)/);
     const raw = readFileSync(har, "utf8");
     assert.ok(raw.includes(PASSWORD), "el HAR crudo sí trae los valores: por eso no se comparte");
 
@@ -337,6 +291,50 @@ describe("report.html en el navegador", { skip: chromiumError ?? false, timeout:
       const example = readJson(json);
       const text = await page.locator("body").innerText();
       for (const uc of example.useCases) assert.ok(text.includes(uc.title), `no se ve "${uc.title}"`);
+      assert.deepEqual(errors, []);
+    } finally {
+      await browser.close();
+      cleanup();
+    }
+  });
+
+  it("muestra los procesos locales y los proxies sin contenedor", async () => {
+    const { chromium } = await import("playwright");
+    const { tempDir, ASSETS } = await import("./helpers.ts");
+    const { dir, cleanup } = tempDir();
+    const browser = await chromium.launch();
+    try {
+      const report = readJson(join(ASSETS, "report.example.json"));
+      report.services.push({
+        name: "web",
+        mode: "process",
+        command: "bun run dev",
+        cwd: "./apps/web",
+        port: 3000,
+        endpoint: "http://localhost:3000",
+        env: [{ name: "API_KEY", source: "manifest", value: "••••", sensitive: true, fromEnv: "WEB_API_KEY" }],
+        health: { check: "GET /healthz", status: "healthy", durationMs: 12 },
+        requestCount: 0,
+        readyMs: 850,
+        artifacts: [],
+        process: { pid: 4242, startedAt: "2026-11-23T10:00:00.000Z", stoppedAt: "2026-11-23T10:01:00.000Z", exitCode: null, signal: "SIGTERM", log: "logs/web.log" },
+        proxy: { engine: "local", listen: "http://127.0.0.1:18085", upstream: "http://localhost:3000", evidence: "evidence/web.har" },
+      });
+      assert.deepEqual(await validateReport(report), []);
+      const json = join(dir, "proc.json");
+      writeJson(json, report);
+      const r = await runAsync(join(SCRIPTS, "render-report.ts"), [json], { cwd: dir });
+      assert.equal(r.code, 0, r.out);
+      const page = await browser.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.fulfill({ status: 200, contentType: "text/css", body: "" }));
+      await page.goto("file://" + join(dir, "proc.html"));
+      const group = page.locator("#services-proc");
+      await assert.doesNotReject(group.waitFor({ state: "visible", timeout: 5000 }));
+      const text = await group.innerText();
+      for (const t of ["Proceso local", "bun run dev", "./apps/web", "4242 · detenido con SIGTERM · salida en logs/web.log", "API_KEY ← $WEB_API_KEY", "proceso local · http://127.0.0.1:18085 → http://localhost:3000"])
+        assert.ok(text.includes(t), `no se ve "${t}" en:\n${text}`);
       assert.deepEqual(errors, []);
     } finally {
       await browser.close();

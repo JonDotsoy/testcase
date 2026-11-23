@@ -1,6 +1,6 @@
 ---
 name: testcase
-description: Convierte los casos de prueba que describe la persona en un reporte HTML de testmania. El agente escribe cada caso como script TypeScript con Playwright, provisiona los servicios con Podman y un proxy de evidencia, mantiene el JSON del reporte y genera el HTML. Úsala cuando la persona describa casos de prueba, pida probar un flujo de una API o pida el reporte de pruebas.
+description: Convierte los casos de prueba que describe la persona en un reporte HTML de testmania. El agente escribe cada caso como script TypeScript con Playwright, provisiona los servicios (contenedores con Podman o procesos locales) con un proxy de evidencia, mantiene el JSON del reporte y genera el HTML. Úsala cuando la persona describa casos de prueba, pida probar un flujo de una API o pida el reporte de pruebas.
 ---
 
 # testcase
@@ -10,13 +10,13 @@ El resultado de esta skill es un **reporte HTML** de pruebas. Para llegar a él:
 - **La persona describe los casos de prueba** en lenguaje natural ("un cliente no puede cancelar el pedido de otro").
 - **El agente escribe cada caso de uso como un script TypeScript autocontenido** (`UC-NN.case.ts`): declara sus servicios con `defineService` y usa Playwright, tanto su cliente HTTP como el navegador. Los scripts viven en un espacio de trabajo temporal con su propio `package.json` y sus dependencias.
 - **El agente mantiene un JSON** (`.testcase/report.json`) que sigue el schema de `references/report-schema.md`. Es la única fuente de verdad del reporte.
-- **El agente provee los servicios, su configuración y los estados**: levanta los contenedores con Podman y pone un proxy delante de cada servicio URL para capturar la evidencia de cada request y response.
+- **El agente provee los servicios, su configuración y los estados**: levanta los contenedores con Podman y los procesos locales (un comando de shell), y pone un proxy delante de cada servicio HTTP para capturar la evidencia de cada request y response.
 - **Los scripts de la skill** importan la evidencia, recalculan los totales y generan el HTML. El agente no escribe HTML a mano.
 
 ```text
 persona: describe casos
   └─▶ agente: escribe .testcase/cases/*.case.ts (defineCase + defineService, Playwright)
-  └─▶ cases.ts --plan: servicios al reporte + compose.yaml ──▶ agente los levanta con su proxy de evidencia
+  └─▶ cases.ts --plan: servicios al reporte + compose.yaml + local.json ──▶ agente los levanta con su proxy de evidencia (podman compose, local.ts)
         └─▶ cases.ts: espacio temporal + run.ts, corre los casos por el proxy ──▶ .testcase/evidence/*.har + .testcase/run-assertions.json
               └─▶ import-har.ts ──▶ sync-report.ts ──▶ render-report.ts ──▶ .testcase/report.html
 ```
@@ -31,6 +31,8 @@ persona: describe casos
 | `assets/report.example.json` | Reporte completo de ejemplo (9 casos, 24 requests HTTP, gRPC, GraphQL, WebSocket y SQL). |
 | `assets/report.template.html` | Plantilla del HTML. No la edites para un reporte puntual. |
 | `scripts/cases.ts` | Ejecuta los `*.case.ts`: arma el espacio de trabajo temporal, instala Playwright si hace falta y corre `run.ts` (`--plan`, `--only`, `--headed`, `--typecheck`). |
+| `scripts/local.ts` | Levanta, revisa y detiene lo que corre sin contenedor: los procesos locales y los proxies locales (`up`, `status`, `down`). Guarda cada PID en el reporte. |
+| `scripts/proxy.ts` | Proxy de evidencia sin contenedor: reenvía al servicio y escribe el HAR como mitmdump. Lo levanta `local.ts`. |
 | `scripts/import-har.ts` | Importa la evidencia (HAR) del proxy y la une con las aserciones del runner. |
 | `scripts/sync-report.ts` | Recalcula los campos derivados del JSON (estados, totales, línea de tiempo, inventario de invocaciones). |
 | `scripts/render-report.ts` | Valida las referencias del JSON y genera el HTML. |
@@ -65,6 +67,9 @@ const db = defineService({
   artifacts: [{ kind: "migration", source: "./db/migrations/*.sql" }, { kind: "seed", source: "./db/seeds/usuarios.sql" }],
   health: "pg_isready",
 });
+
+// Proceso local: un comando de shell en su carpeta, sin contenedor. Con port, habla HTTP y tiene proxy local.
+const web = defineService({ name: "web", command: "bun run dev", cwd: "./apps/web", port: 3000, dependsOn: [db], health: "GET /healthz" });
 
 export default defineCase(() => {
   title(() => "Cliente no puede cancelar un pedido ajeno");
@@ -106,6 +111,7 @@ La API completa:
 | `id("UC-NN")` | Si el archivo tiene un solo caso, es opcional: el id sale del nombre (`UC-03.case.ts` → `UC-03`). Si tiene varios, cada caso declara el suyo. |
 | `given(texto, fn?)` · `when(…)` · `then(…)` | Pasos. Se ejecutan en el orden en que se escriben. `fn` es opcional: `given("un pedido de María")` deja el paso solo como texto. |
 | `defineService({ name, endpoint, … })` | Servicio URL que ya existe (`connected`). Campos: `endpoint`, `version?`, `health?`. |
+| `defineService({ name, command, … })` | Proceso local (`process`): un comando de shell que corre en esta máquina, sin contenedor. Campos: `command`, `cwd?` (relativa a la raíz del proyecto), `port?` (donde escucha; con puerto habla HTTP y va por un proxy local), `env?`, `dependsOn?`, `artifacts?`, `health?` (`GET /ruta` lo corre `local.ts`), `http?`. Con `image` o `build`, `command` es el comando del contenedor, no un proceso local. |
 | `defineService({ name, image \| build, … })` | Contenedor (`provisioned`). Campos: `image` o `build` (texto con el contexto, o `{ context, dockerfile?, args?, target? }`; rutas relativas a la raíz del proyecto), `command?`, `tmpfs?` (rutas en memoria), `ports?` (`{ container, host? }`; sin `host` se asigna uno desde 55000), `env?`, `dependsOn?` (nombres o servicios), `storage?`, `artifacts?` (`{ kind, source, description? }`), `health?`, `http?` (si habla HTTP, va por proxy). |
 | `fromEnv("VAR")` | Valor de `env` que sale del entorno del host. Queda enmascarado en el reporte, y si la variable existe al correr, su valor se ofusca como con `sensitive`. |
 | `sensitive(valor)` | Declara un valor o texto sensible y lo devuelve tal cual: `const password = sensitive(process.env.PEDRO_PASSWORD)`. El caso usa el valor real; en el reporte y en el HTML queda como `••••` donde aparezca (URL, headers, bodies, anotaciones, aserciones). Va en el módulo, en `defineCase` o en un paso, por ejemplo `sensitive(login.body.access_token)`. Valores de menos de 4 caracteres no se registran. |
@@ -133,19 +139,34 @@ Reglas:
 
 ### 3. Proveer los servicios
 
-Los servicios salen de los `defineService` de los scripts, y se levantan con un **archivo compose** que genera `run.ts`. **Usa Podman** (`podman compose`). Usa Docker (`docker compose`) solo si Podman no está instalado, y dilo en el reporte (`proxy.engine`, `run.runtime.engine`).
+Los servicios salen de los `defineService` de los scripts. Los contenedores se levantan con un **archivo compose** que genera `run.ts`; los procesos locales y los proxies sin contenedor, con `scripts/local.ts`. **Usa Podman** (`podman compose`). Usa Docker (`docker compose`) solo si Podman no está instalado, y dilo en el reporte (`proxy.engine`, `run.runtime.engine`). Si no hay Podman ni Docker, o la persona lo prefiere, usa proxies locales con `--proxy local`.
 
 ```sh
-bun <skill>/scripts/cases.ts --report .testcase/report.json --plan
+bun <skill>/scripts/cases.ts --report .testcase/report.json --plan                 # proxies en contenedores
+bun <skill>/scripts/cases.ts --report .testcase/report.json --plan --proxy local   # proxies como procesos locales
 ```
 
-`--plan` pasa al reporte los servicios declarados (`connected` con `host` y `endpoint`; `provisioned` con `image`, `build`, `ports`, `env` enmascarado y `dependsOn`), les asigna puertos y un proxy de evidencia a cada servicio HTTP, y escribe `.testcase/compose.yaml`:
+`--plan` pasa al reporte los servicios declarados (`connected` con `host` y `endpoint`; `provisioned` con `image`, `build`, `ports`, `env` enmascarado y `dependsOn`; `process` con `command`, `cwd`, `port` y `env`), les asigna puertos y un proxy de evidencia a cada servicio HTTP, y escribe `.testcase/compose.yaml` si hay algo que levantar con compose:
 
 - Un servicio de compose por contenedor, con `image` o `build` (contexto relativo a la raíz del proyecto), `ports`, `environment`, `tmpfs`, `command` y `depends_on`. Los contenedores se alcanzan entre sí por su nombre (`postgres:5432`).
-- Un servicio `proxy-<nombre>` (mitmdump) por cada servicio HTTP, que escribe `.testcase/evidence/<nombre>.har` al detenerse.
+- Un servicio `proxy-<nombre>` (mitmdump) por cada servicio HTTP con proxy en contenedor, que escribe `.testcase/evidence/<nombre>.har` al detenerse.
 - Los valores de `fromEnv()` quedan como `${VAR:?…}`: compose falla con un mensaje claro si la variable no existe.
 
-No edites `compose.yaml` a mano: cambia los scripts y vuelve a correr `--plan`. La salida dice cómo levantarlo (`podman compose -f .testcase/compose.yaml up -d`, con `--build` si hay imágenes que construir), cómo detenerlo (primero `stop` de los proxies, después `down`) y qué queda pendiente para ti.
+Y `.testcase/local.json` si hay procesos locales o proxies locales:
+
+- Cada proceso local con su comando, carpeta, puerto, variables y healthcheck. Siempre tiene un proxy local, porque un contenedor no alcanza bien los puertos de esta máquina.
+- Cada proxy local (`scripts/proxy.ts`): puerto, servicio real al que reenvía y HAR. Escribe el HAR después de cada request y al detenerse, con la misma forma que mitmdump.
+- `--proxy local` pone también los proxies de los servicios conectados y de los contenedores HTTP en `local.json`. Sin `--proxy`, cada servicio conserva el tipo de proxy que ya tenía. Un contenedor no puede depender de un proceso local.
+
+```sh
+node <skill>/scripts/local.ts up --report .testcase/report.json       # después de podman compose up, si lo hay
+node <skill>/scripts/local.ts status --report .testcase/report.json   # PIDs y si siguen vivos; termina con 1 si alguno se cayó
+node <skill>/scripts/local.ts down --report .testcase/report.json     # primero los proxies (escriben el HAR), después los procesos
+```
+
+`up` corre cada proceso en su carpeta en orden de dependencias, espera a que abra su puerto, corre el healthcheck si es `GET /ruta`, levanta los proxies y guarda en el reporte el PID de cada uno (`process.pid`, `proxy.pid`), cuándo arrancó y cuánto tardó (`readyMs`). La salida de cada proceso queda en `.testcase/logs/<nombre>.log`: léela si algo falla. Si un proceso termina o no abre su puerto a tiempo (`--timeout`, 30 s por defecto), detiene lo que levantó y muestra las últimas líneas de su salida. `down` registra `process.stoppedAt` y la señal con que terminó.
+
+No edites `compose.yaml` ni `local.json` a mano: cambia los scripts y vuelve a correr `--plan`. La salida dice cómo levantar todo (`podman compose -f .testcase/compose.yaml up -d`, con `--build` si hay imágenes que construir), cómo detenerlo (primero `stop` de los proxies, después `down`) y qué queda pendiente para ti.
 
 Levanta el compose y completa lo pendiente con datos reales:
 
@@ -170,7 +191,7 @@ bun <skill>/scripts/cases.ts --report .testcase/report.json --headed          # 
 
 Después:
 
-1. Detén el compose como indica `--plan`: primero `podman compose -f .testcase/compose.yaml stop proxy-…` (mitmdump escribe el HAR al detenerse), después `down`.
+1. Detén los servicios como indica `--plan`: primero `local.ts down` si hay procesos o proxies locales, después `podman compose -f .testcase/compose.yaml stop proxy-…` (mitmdump escribe el HAR al detenerse) y `down`.
 2. Importa la evidencia de cada servicio:
 
    ```sh
@@ -205,7 +226,7 @@ Al terminar, borra `.testcase/run-sensitive.json`. El espacio de trabajo tempora
 
 ## Cambios posteriores
 
-- **La persona agrega o cambia un caso**: edita o crea su script, corre `--plan` si cambió algún servicio, levanta el compose, corre `cases.ts --only UC-NN`, importa, sincroniza y genera el HTML. Una corrida con `--only` reemplaza los requests del reporte: si quieres el reporte completo, corre todos los casos.
+- **La persona agrega o cambia un caso**: edita o crea su script, corre `--plan` si cambió algún servicio, levanta los servicios, corre `cases.ts --only UC-NN`, importa, sincroniza y genera el HTML. Una corrida con `--only` reemplaza los requests del reporte: si quieres el reporte completo, corre todos los casos.
 - **La persona quita un caso**: borra su script y su elemento en `useCases`, y vuelve a correr.
 - **Historial**: antes de una corrida nueva, guarda una copia como `.testcase/report-<número>.json` si la persona lo pide.
 
@@ -240,3 +261,4 @@ Las claves van en minúsculas (se permiten tildes, ñ y espacios), con `-` o `_`
 - No toques un servicio `connected` más allá de los requests de los casos, y no lo llames sin pasar por su proxy.
 - No instales dependencias del espacio de trabajo en el repositorio de la persona: van en el directorio temporal.
 - No borres los archivos de `.testcase/evidence/`: son la evidencia del reporte.
+- No dejes procesos locales corriendo: termina siempre con `local.ts down`, también si la corrida falla.

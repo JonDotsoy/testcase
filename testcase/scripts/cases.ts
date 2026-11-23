@@ -5,7 +5,7 @@
  * temporal con su propio package.json y Playwright (desde `assets/workspace`), copia ahí los scripts y corre run.ts.
  *
  * Uso (desde la raíz del proyecto):
- *   bun <skill>/scripts/cases.ts --report .testcase/report.json --plan          # servicios → reporte + compose.yaml
+ *   bun <skill>/scripts/cases.ts --report .testcase/report.json --plan          # servicios → reporte + compose.yaml y local.json
  *   bun <skill>/scripts/cases.ts --report .testcase/report.json                 # corre todos los casos
  *   bun <skill>/scripts/cases.ts --report .testcase/report.json --only UC-03    # solo algunos
  *   bun <skill>/scripts/cases.ts --report .testcase/report.json --typecheck     # revisa los tipos y no corre
@@ -14,7 +14,8 @@
  *   [archivos o carpetas…]  Scripts a copiar. Por defecto, `<carpeta del reporte>/cases/`. Se copian los `*.ts`
  *                           (casos y módulos que compartan); run.ts corre los `*.case.ts`.
  *   --report <ruta>         Reporte JSON (obligatorio).
- *   --plan | --only | --headed   Se pasan a run.ts.
+ *   --plan | --proxy | --only | --headed   Se pasan a run.ts. `--proxy local` corre los proxies de evidencia como
+ *                           procesos locales (scripts/proxy.ts) en vez de contenedores.
  *   --typecheck             Corre `tsc --noEmit` en el espacio de trabajo y termina.
  *   --workspace <dir>       Espacio de trabajo. Por defecto uno temporal por proyecto, que se reutiliza entre
  *                           corridas para no reinstalar dependencias. También TESTCASE_WORKSPACE.
@@ -30,7 +31,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
 const args = process.argv.slice(2);
-const VALUE_FLAGS = new Set(["--report", "--only", "--workspace"]);
+const VALUE_FLAGS = new Set(["--report", "--only", "--workspace", "--proxy"]);
 const flag = (name: string) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
@@ -40,7 +41,7 @@ const positional = args.filter((a, i) => !a.startsWith("--") && !(i > 0 && VALUE
 
 const reportArg = flag("--report");
 if (!reportArg) {
-  console.log("Uso: bun scripts/cases.ts --report .testcase/report.json [archivos o carpetas…] [--plan] [--only UC-01,UC-02] [--headed] [--typecheck] [--workspace dir] [--skip-install] [--clean]");
+  console.log("Uso: bun scripts/cases.ts --report .testcase/report.json [archivos o carpetas…] [--plan [--proxy local|podman]] [--only UC-01,UC-02] [--headed] [--typecheck] [--workspace dir] [--skip-install] [--clean]");
   process.exit(1);
 }
 const reportPath = resolve(reportArg);
@@ -88,7 +89,7 @@ if (existsSync(join(template, "examples"))) cpSync(join(template, "examples"), j
 const isBun = !!(process.versions as any).bun;
 const which = (cmd: string) => spawnSync(process.platform === "win32" ? "where" : "which", [cmd], { stdio: "ignore" }).status === 0;
 const run = (cmd: string, argv: string[]) => {
-  const r = spawnSync(cmd, argv, { cwd: ws, stdio: "inherit", env: process.env });
+  const r = spawnSync(cmd, argv, { cwd: ws, stdio: "inherit", env: { ...process.env, TESTCASE_SCRIPTS: here } });
   if (r.error) {
     console.error(`No pude ejecutar ${cmd}: ${r.error.message}`);
     return 1;
@@ -123,6 +124,8 @@ if (has("--typecheck")) {
 const passthrough: string[] = ["--report", reportPath];
 if (has("--plan")) passthrough.push("--plan");
 if (has("--headed")) passthrough.push("--headed");
+const proxy = flag("--proxy");
+if (proxy) passthrough.push("--proxy", proxy);
 const only = flag("--only");
 if (only) passthrough.push("--only", only);
 

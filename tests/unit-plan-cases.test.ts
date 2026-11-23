@@ -169,7 +169,7 @@ describe("run.ts --plan", () => {
       assert.equal(pg.image, "docker.io/library/postgres:16.4-alpine");
       assert.deepEqual(pg.ports, [{ host: 55000, container: 5432 }]);
       assert.equal(pg.storage, "tmpfs");
-      assert.deepEqual(pg.env.find((e: any) => e.name === "POSTGRES_PASSWORD"), { name: "POSTGRES_PASSWORD", source: "manifest", value: "••••", sensitive: true });
+      assert.deepEqual(pg.env.find((e: any) => e.name === "POSTGRES_PASSWORD"), { name: "POSTGRES_PASSWORD", source: "manifest", value: "••••", sensitive: true, fromEnv: "PG_PASSWORD" });
       assert.equal(pg.proxy, undefined, "postgres no habla HTTP: sin proxy");
 
       const svc = byName["pedidos-svc"];

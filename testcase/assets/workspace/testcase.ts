@@ -275,7 +275,40 @@ export interface ProvisionedServiceDefinition extends ServiceBase {
   http?: boolean;
 }
 
-export type ServiceDefinition = ConnectedServiceDefinition | ProvisionedServiceDefinition;
+/**
+ * Proceso local: un comando de shell que levanta el servicio en esta máquina, sin contenedor.
+ * `scripts/local.ts up` lo corre en `cwd`, guarda su PID en el reporte y su salida en `.testcase/logs/<name>.log`.
+ */
+export interface ProcessServiceDefinition extends ServiceBase {
+  /** Comando de shell, por ejemplo `bun run dev`. */
+  command: string;
+  /** Carpeta donde corre, relativa a la raíz del proyecto. Por defecto, la raíz. */
+  cwd?: string;
+  /** Puerto local donde escucha. Con puerto, el servicio habla HTTP y tiene proxy de evidencia (local). */
+  port?: number;
+  env?: Record<string, string | FromEnv>;
+  dependsOn?: Array<string | Service>;
+  artifacts?: ArtifactDefinition[];
+  /** Por defecto true si declara `port`. */
+  http?: boolean;
+}
+
+export type ServiceDefinition = ConnectedServiceDefinition | ProvisionedServiceDefinition | ProcessServiceDefinition;
+
+/** Tipo de servicio según su definición: endpoint → connected, image/build → provisioned, command solo → process. */
+export function serviceKind(def: ServiceDefinition): "connected" | "provisioned" | "process" {
+  if ("endpoint" in def && def.endpoint) return "connected";
+  if (("image" in def && def.image) || ("build" in def && def.build)) return "provisioned";
+  return "process";
+}
+
+/** El servicio habla HTTP: tiene proxy de evidencia y métodos get/post… */
+export function isHttpService(def: ServiceDefinition): boolean {
+  const kind = serviceKind(def);
+  if (kind === "connected") return true;
+  if (kind === "process") return (def as ProcessServiceDefinition).http ?? (def as ProcessServiceDefinition).port != null;
+  return !!(def as ProvisionedServiceDefinition).http;
+}
 
 /** Servicio declarado en el script. Sus métodos HTTP pasan por el proxy y quedan como evidencia del caso. */
 export interface Service extends Api {
@@ -298,12 +331,21 @@ export function declaredServices(): ServiceDefinition[] {
  *   const api = defineService({ name: "api", endpoint: "https://api.example.com", health: "GET /healthz" });
  *   const db = defineService({ name: "postgres", image: "docker.io/library/postgres:16.4-alpine", ports: [{ container: 5432 }] });
  *   const svc = defineService({ name: "pedidos-svc", build: "./services/pedidos", ports: [{ container: 8080 }], dependsOn: [db], http: true });
+ *   const web = defineService({ name: "web", command: "bun run dev", cwd: "./apps/web", port: 3000 });
  */
 export function defineService(def: ServiceDefinition): Service {
   if (!def?.name) throw new Error("defineService() necesita un name.");
   const isConnected = "endpoint" in def && !!def.endpoint;
   const isProvisioned = ("image" in def && !!def.image) || ("build" in def && !!def.build);
-  if (isConnected === isProvisioned) throw new Error(`defineService("${def.name}"): declara endpoint (servicio conectado) o image/build (contenedor), no los dos.`);
+  const isProcess = !isConnected && !isProvisioned && "command" in def && typeof def.command === "string" && def.command.trim() !== "";
+  if ([isConnected, isProvisioned, isProcess].filter(Boolean).length !== 1 || (isConnected && (isProvisioned || "command" in def))) {
+    throw new Error(`defineService("${def.name}"): declara endpoint (servicio conectado), image/build (contenedor) o command (proceso local), solo uno.`);
+  }
+  if (isProcess) {
+    const port = (def as ProcessServiceDefinition).port;
+    if (port != null && (!Number.isInteger(port) || port < 1 || port > 65535)) throw new Error(`defineService("${def.name}"): port debe ser un entero entre 1 y 65535.`);
+    if ((def as ProcessServiceDefinition).http && port == null) throw new Error(`defineService("${def.name}"): un proceso http necesita port.`);
+  }
   const prev = declared.get(def.name);
   if (prev && !isDeepStrictEqual(normalizeDef(prev), normalizeDef(def))) {
     throw new Error(`El servicio "${def.name}" está declarado dos veces con definiciones distintas. Usa la misma definición en todos los scripts que lo declaran.`);

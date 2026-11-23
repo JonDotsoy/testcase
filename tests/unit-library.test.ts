@@ -10,6 +10,8 @@ import {
   declaredServices,
   defineCase,
   defineService,
+  isHttpService,
+  serviceKind,
   encodeHeaderJson,
   ensure,
   fromEnv,
@@ -379,9 +381,23 @@ describe("defineService", () => {
     assert.throws(() => defineService({ name: "svc-conf", endpoint: "https://b.example.com" }), /declarado dos veces con definiciones distintas/);
   });
 
-  it("exige endpoint o image/build, no los dos ni ninguno", () => {
+  it("declara procesos locales con comando, cwd y puerto", () => {
+    const web = defineService({ name: "svc-proc", command: "bun run dev", cwd: "./apps/web", port: 3000 });
+    assert.equal(serviceKind(web.definition), "process");
+    assert.equal(isHttpService(web.definition), true, "con puerto habla HTTP");
+    const worker = defineService({ name: "svc-worker", command: "node worker.js" });
+    assert.equal(isHttpService(worker.definition), false);
+    assert.equal(serviceKind({ name: "x", image: "img", command: "run" }), "provisioned", "command con image es el comando del contenedor");
+    assert.equal(serviceKind({ name: "x", endpoint: "https://x.example.com" }), "connected");
+    assert.throws(() => defineService({ name: "svc-bad-port", command: "x", port: 70000 }), /port debe ser un entero/);
+    assert.throws(() => defineService({ name: "svc-http-no-port", command: "x", http: true }), /un proceso http necesita port/);
+  });
+
+  it("exige endpoint, image/build o command, solo uno", () => {
     assert.throws(() => defineService({ name: "nada" } as any), /declara endpoint/);
+    assert.throws(() => defineService({ name: "vacío", command: "  " } as any), /declara endpoint/);
     assert.throws(() => defineService({ name: "ambos", endpoint: "https://x.example.com", image: "x" } as any), /declara endpoint/);
+    assert.throws(() => defineService({ name: "url-y-comando", endpoint: "https://x.example.com", command: "x" } as any), /declara endpoint/);
     assert.throws(() => defineService({} as any), /necesita un name/);
   });
 });

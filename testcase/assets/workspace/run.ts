@@ -9,7 +9,11 @@
  *
  * --plan: pasa al reporte los servicios declarados con defineService, asigna puertos y proxies de evidencia,
  * y escribe `<carpeta del reporte>/compose.yaml` (servicios + un proxy mitmdump por servicio HTTP).
- * Imprime cómo levantarlo y detenerlo con `podman compose`. No corre los casos.
+ * Los servicios `command` (procesos locales) y los proxies sin contenedor (`--proxy local`) van a `<carpeta del reporte>/local.json`,
+ * que levanta y detiene `scripts/local.ts`. Imprime cómo levantar y detener todo. No corre los casos.
+ *
+ * --proxy local|podman: dónde corren los proxies de evidencia de los servicios conectados y de los contenedores.
+ * Por defecto, el que ya tenía el servicio, o podman. Los procesos locales siempre usan un proxy local.
  *
  * Sin --plan:
  *   0. Pasa al reporte los servicios declarados con defineService (sin tocar health, proxy ni artefactos aplicados).
@@ -21,10 +25,11 @@
  *
  * Después: detén los proxies (escriben el HAR), corre import-har.ts, sync-report.ts y render-report.ts.
  */
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { CaseAbort, createContext, declaredServices, maskSensitive, sensitiveValues, takeDefinedCases, type CaseDefinition, type RecordedCheck, type RecordedNotation, type ServiceDefinition, type ServiceTarget } from "./testcase.ts";
+import { CaseAbort, createContext, declaredServices, isHttpService, serviceKind, maskSensitive, sensitiveValues, takeDefinedCases, type CaseDefinition, type RecordedCheck, type RecordedNotation, type ProcessServiceDefinition, type ProvisionedServiceDefinition, type ServiceDefinition, type ServiceTarget } from "./testcase.ts";
 
 const args = process.argv.slice(2);
 const opt = (name: string) => {
@@ -33,12 +38,17 @@ const opt = (name: string) => {
 };
 const reportArg = opt("--report");
 if (!reportArg) {
-  console.log("Uso: node run.ts --report <.testcase/report.json> [--plan] [--only UC-01,UC-02] [--headed]");
+  console.log("Uso: node run.ts --report <.testcase/report.json> [--plan [--proxy local|podman]] [--only UC-01,UC-02] [--headed]");
   process.exit(1);
 }
 const only = opt("--only")?.split(",").map((s) => s.trim());
 const headed = args.includes("--headed");
 const plan = args.includes("--plan");
+const proxyArg = opt("--proxy");
+if (proxyArg && !["local", "podman"].includes(proxyArg)) {
+  console.error(`--proxy acepta local o podman, no "${proxyArg}".`);
+  process.exit(1);
+}
 
 const reportPath = resolve(reportArg);
 const reportDir = dirname(reportPath);
@@ -99,39 +109,59 @@ const nextPort = (from: number) => {
   usedPorts.add(p);
   return p;
 };
-const isHttp = (d: ServiceDefinition) => "endpoint" in d || !!(d as any).http;
+const isHttp = isHttpService;
+const envEntries = (env: Record<string, any> | undefined) =>
+  Object.entries(env ?? {}).map(([name, v]) =>
+    typeof v === "string" ? { name, source: "manifest", value: v } : { name, source: "manifest", value: "••••", sensitive: true, fromEnv: v.fromEnv },
+  );
 for (const d of declared) {
+  const kind = serviceKind(d);
   let s = report.services.find((x: any) => x.name === d.name);
   if (!s) report.services.push((s = { name: d.name }));
-  if ("endpoint" in d) {
-    if (s.mode === "provisioned") for (const k of ["image", "build", "ports", "env", "dependsOn", "storage", "readyMs", "artifacts"]) delete s[k];
+  if (s.mode && s.mode !== (kind === "connected" ? "connected" : kind)) {
+    for (const k of ["host", "version", "tls", "image", "build", "ports", "env", "dependsOn", "storage", "readyMs", "artifacts", "command", "cwd", "port", "process"]) delete s[k];
+  }
+  if (kind === "connected" && "endpoint" in d) {
     Object.assign(s, { mode: "connected", host: new URL(d.endpoint).host, endpoint: d.endpoint });
     if (d.version) s.version = d.version;
+  } else if (kind === "process") {
+    const p = d as ProcessServiceDefinition;
+    Object.assign(s, {
+      mode: "process",
+      command: p.command,
+      cwd: p.cwd ?? ".",
+      endpoint: p.port != null ? `http://localhost:${p.port}` : p.name,
+      env: envEntries(p.env),
+      artifacts: s.artifacts ?? [],
+    });
+    if (p.port != null) s.port = p.port;
+    else delete s.port;
+    const deps = (p.dependsOn ?? []).map((x) => (typeof x === "string" ? x : x.name));
+    if (deps.length) s.dependsOn = deps;
+    else delete s.dependsOn;
   } else {
-    if (s.mode === "connected") for (const k of ["host", "version", "tls"]) delete s[k];
+    const c = d as ProvisionedServiceDefinition;
     const prevPorts: any[] = s.ports ?? [];
-    const ports = (d.ports ?? []).map((p) => ({
+    const ports = (c.ports ?? []).map((p) => ({
       host: p.host ?? prevPorts.find((x) => x.container === p.container)?.host ?? nextPort(55000),
       container: p.container,
       ...(p.protocol ? { protocol: p.protocol } : {}),
     }));
     Object.assign(s, {
       mode: "provisioned",
-      image: d.image ?? `localhost/testcase-${d.name}:latest`,
-      endpoint: ports.length ? `localhost:${ports[0].host}` : d.name,
+      image: c.image ?? `localhost/testcase-${c.name}:latest`,
+      endpoint: ports.length ? `localhost:${ports[0].host}` : c.name,
       ports,
-      env: Object.entries(d.env ?? {}).map(([name, v]) =>
-        typeof v === "string" ? { name, source: "manifest", value: v } : { name, source: "manifest", value: "••••", sensitive: true },
-      ),
+      env: envEntries(c.env),
       artifacts: s.artifacts ?? [],
     });
-    const deps = (d.dependsOn ?? []).map((x) => (typeof x === "string" ? x : x.name));
+    const deps = (c.dependsOn ?? []).map((x) => (typeof x === "string" ? x : x.name));
     if (deps.length) s.dependsOn = deps;
     else delete s.dependsOn;
-    const storage = d.storage ?? (d.tmpfs?.length ? "tmpfs" : undefined);
+    const storage = c.storage ?? (c.tmpfs?.length ? "tmpfs" : undefined);
     if (storage) s.storage = storage;
-    if (d.build) {
-      const b = typeof d.build === "string" ? { context: d.build } : d.build;
+    if (c.build) {
+      const b = typeof c.build === "string" ? { context: c.build } : c.build;
       s.build = { context: b.context, ...(b.dockerfile ? { dockerfile: b.dockerfile } : {}) };
     } else delete s.build;
   }
@@ -150,10 +180,15 @@ for (const d of declared) {
 if (plan) {
   const projectRoot = dirname(reportDir);
   const composePath = join(reportDir, "compose.yaml");
+  const localPath = join(reportDir, "local.json");
+  const scriptsDir = process.env.TESTCASE_SCRIPTS ?? "<skill>/scripts";
   const order: ServiceDefinition[] = [];
   const visit = (d: ServiceDefinition, seen: string[] = []) => {
     if (order.includes(d)) return;
-    if (seen.includes(d.name)) throw new Error(`Dependencia circular: ${[...seen, d.name].join(" → ")}`);
+    if (seen.includes(d.name)) {
+      console.error(`Dependencia circular: ${[...seen, d.name].join(" → ")}`);
+      process.exit(1);
+    }
     for (const dep of (d as any).dependsOn ?? []) {
       const dd = declared.find((x) => x.name === (typeof dep === "string" ? dep : dep.name));
       if (dd) visit(dd, [...seen, d.name]);
@@ -166,6 +201,15 @@ if (plan) {
       console.error(`El nombre "${d.name}" no sirve como servicio de compose: usa minúsculas, números, - o _.`);
       process.exit(1);
     }
+    if (serviceKind(d) === "provisioned") {
+      for (const dep of (d as ProvisionedServiceDefinition).dependsOn ?? []) {
+        const dd = declared.find((x) => x.name === (typeof dep === "string" ? dep : dep.name));
+        if (dd && serviceKind(dd) === "process") {
+          console.error(`El contenedor "${d.name}" depende del proceso local "${dd.name}": compose no puede esperarlo. Declara la dependencia al revés o levanta "${dd.name}" como contenedor.`);
+          process.exit(1);
+        }
+      }
+    }
   }
 
   // Ruta del proyecto → ruta relativa a compose.yaml
@@ -176,23 +220,40 @@ if (plan) {
   // En compose, `$` interpola variables: un valor literal lo escapa como `$$`.
   const literal = (v: string) => v.replace(/\$/g, "$$$$");
 
+  // Puertos de los proxies: se conservan entre corridas; uno nuevo salta los ocupados en esta máquina.
+  const portFree = (port: number) =>
+    new Promise<boolean>((ok) => {
+      const srv = createServer();
+      srv.once("error", () => ok(false));
+      srv.listen(port, "127.0.0.1", () => srv.close(() => ok(true)));
+    });
   const usedProxy = new Set<number>(
     report.services.map((s: any) => s.proxy?.listen).filter(Boolean).map((l: string) => Number(new URL(l).port)),
   );
+  const newProxyPort = async () => {
+    let p = 18080;
+    while (usedProxy.has(p) || !(await portFree(p))) p++;
+    usedProxy.add(p);
+    return p;
+  };
+
   const services: Record<string, any> = {};
-  const proxies: string[] = [];
+  const containerProxies: string[] = [];
+  const local: { projectRoot: string; services: any[]; proxies: any[] } = { projectRoot: relative(reportDir, projectRoot) || ".", services: [], proxies: [] };
   const pending: string[] = [];
   const envVars = new Set<string>();
   let builds = false;
 
   for (const d of order) {
+    const kind = serviceKind(d);
     const s = report.services.find((x: any) => x.name === d.name);
-    if (!("endpoint" in d)) {
+    if (kind === "provisioned") {
+      const c = d as ProvisionedServiceDefinition;
       const svc: Record<string, any> = {};
-      if (d.image) svc.image = d.image;
-      if (d.build) {
+      if (c.image) svc.image = c.image;
+      if (c.build) {
         builds = true;
-        const b = typeof d.build === "string" ? { context: d.build } : d.build;
+        const b = typeof c.build === "string" ? { context: c.build } : c.build;
         svc.build = {
           context: fromCompose(b.context),
           ...(b.dockerfile ? { dockerfile: b.dockerfile } : {}),
@@ -201,10 +262,10 @@ if (plan) {
         };
         svc.image ??= s.image;
       }
-      svc.container_name = `tc-${d.name}`;
-      if (d.command) svc.command = d.command;
+      svc.container_name = `tc-${c.name}`;
+      if (c.command) svc.command = c.command;
       if (s.ports.length) svc.ports = s.ports.map((p: any) => `${p.host}:${p.container}${p.protocol && p.protocol !== "tcp" ? "/" + p.protocol : ""}`);
-      const env = Object.entries(d.env ?? {});
+      const env = Object.entries(c.env ?? {});
       if (env.length) {
         svc.environment = Object.fromEntries(
           env.map(([k, v]) => {
@@ -214,35 +275,70 @@ if (plan) {
           }),
         );
       }
-      if (d.tmpfs?.length) svc.tmpfs = d.tmpfs;
-      else if (d.storage === "tmpfs") pending.push(`${d.name}: storage tmpfs sin ruta; declara tmpfs: ["<directorio de datos>"] en defineService`);
-      const deps = (d.dependsOn ?? []).map((x) => (typeof x === "string" ? x : x.name));
+      if (c.tmpfs?.length) svc.tmpfs = c.tmpfs;
+      else if (c.storage === "tmpfs") pending.push(`${c.name}: storage tmpfs sin ruta; declara tmpfs: ["<directorio de datos>"] en defineService`);
+      const deps = (c.dependsOn ?? []).map((x) => (typeof x === "string" ? x : x.name));
       if (deps.length) svc.depends_on = deps;
-      services[d.name] = svc;
-      for (const a of d.artifacts ?? []) pending.push(`${d.name}: aplicar ${a.kind} ${a.source}`);
-      if (d.health) pending.push(`${d.name}: healthcheck ${d.health}`);
-      if (isHttp(d) && !s.ports.length) throw new Error(`El servicio "${d.name}" es http pero no declara ports.`);
-    }
-    if (isHttp(d)) {
-      let listenPort = s.proxy?.listen ? Number(new URL(s.proxy.listen).port) : 18080;
-      if (!s.proxy?.listen) {
-        while (usedProxy.has(listenPort)) listenPort++;
-        usedProxy.add(listenPort);
+      services[c.name] = svc;
+      if (isHttp(d) && !s.ports.length) {
+        console.error(`El servicio "${d.name}" es http pero no declara ports.`);
+        process.exit(1);
       }
-      const upstream = "endpoint" in d ? new URL(d.endpoint).origin : `http://${d.name}:${s.ports[0].container}`;
-      const proxyName = `proxy-${d.name}`;
-      s.proxy = { engine: "podman", image: PROXY_IMAGE, container: `tc-${proxyName}`, listen: `http://localhost:${listenPort}`, upstream, evidence: `evidence/${d.name}.har` };
-      services[proxyName] = {
-        image: PROXY_IMAGE,
-        container_name: `tc-${proxyName}`,
-        command: ["mitmdump", "--mode", `reverse:${upstream}`, "--listen-port", "8080", "--set", `hardump=/evidence/${d.name}.har`],
-        ports: [`${listenPort}:8080`],
-        volumes: ["./evidence:/evidence:Z"],
-        ...("endpoint" in d ? {} : { depends_on: [d.name] }),
-      };
-      proxies.push(proxyName);
-      if ("endpoint" in d && d.health) pending.push(`${d.name}: healthcheck ${d.health} (a través de ${s.proxy.listen})`);
     }
+    if (kind === "process") {
+      const p = d as ProcessServiceDefinition;
+      const env = Object.fromEntries(
+        Object.entries(p.env ?? {}).map(([k, v]) => {
+          if (typeof v === "string") return [k, v];
+          envVars.add(v.fromEnv);
+          return [k, { fromEnv: v.fromEnv }];
+        }),
+      );
+      const deps = (p.dependsOn ?? []).map((x) => (typeof x === "string" ? x : x.name));
+      local.services.push({
+        name: p.name,
+        command: p.command,
+        cwd: p.cwd ?? ".",
+        ...(p.port != null ? { port: p.port } : {}),
+        ...(Object.keys(env).length ? { env } : {}),
+        ...(deps.length ? { dependsOn: deps } : {}),
+        ...(p.health ? { health: p.health } : {}),
+        log: `logs/${p.name}.log`,
+      });
+    }
+    for (const a of (d as any).artifacts ?? []) pending.push(`${d.name}: aplicar ${a.kind} ${a.source}`);
+    if (d.health && kind !== "connected" && !(kind === "process" && /^(GET|HEAD) \//.test(d.health))) pending.push(`${d.name}: healthcheck ${d.health}`);
+
+    if (isHttp(d)) {
+      const engine = kind === "process" ? "local" : proxyArg ?? s.proxy?.engine ?? "podman";
+      const listenPort = s.proxy?.listen ? Number(new URL(s.proxy.listen).port) : await newProxyPort();
+      const upstream =
+        kind === "connected"
+          ? new URL((d as any).endpoint).origin
+          : kind === "process"
+            ? `http://localhost:${(d as ProcessServiceDefinition).port}`
+            : engine === "local"
+              ? `http://localhost:${s.ports[0].host}`
+              : `http://${d.name}:${s.ports[0].container}`;
+      const evidence = `evidence/${d.name}.har`;
+      if (engine === "local") {
+        s.proxy = { engine: "local", listen: `http://127.0.0.1:${listenPort}`, upstream, evidence };
+        local.proxies.push({ service: d.name, port: listenPort, upstream, har: evidence, log: `logs/proxy-${d.name}.log` });
+      } else {
+        const proxyName = `proxy-${d.name}`;
+        s.proxy = { engine: "podman", image: PROXY_IMAGE, container: `tc-${proxyName}`, listen: `http://localhost:${listenPort}`, upstream, evidence };
+        services[proxyName] = {
+          image: PROXY_IMAGE,
+          container_name: `tc-${proxyName}`,
+          command: ["mitmdump", "--mode", `reverse:${upstream}`, "--listen-port", "8080", "--set", `hardump=/evidence/${d.name}.har`],
+          ports: [`${listenPort}:8080`],
+          volumes: ["./evidence:/evidence:Z"],
+          ...(kind === "connected" ? {} : { depends_on: [d.name] }),
+        };
+        containerProxies.push(proxyName);
+      }
+      if (kind === "connected" && d.health) pending.push(`${d.name}: healthcheck ${d.health} (a través de ${s.proxy.listen})`);
+    } else delete s.proxy;
   }
 
   const yaml = (v: any, indent = ""): string => {
@@ -256,23 +352,46 @@ if (plan) {
         .join("");
     return " " + JSON.stringify(v);
   };
-  const compose =
-    `# Generado por run.ts --plan desde los defineService de los casos. No lo edites a mano: cambia los scripts y vuelve a generarlo.\n` +
-    `# Servicios: ${order.map((d) => d.name).join(", ")}. Proxies de evidencia: ${proxies.join(", ") || "ninguno"}.\n` +
-    `name: testcase` +
-    yaml({ services }) +
-    "\n";
   mkdirSync(join(reportDir, "evidence"), { recursive: true });
-  writeFileSync(composePath, compose);
+  const hasCompose = Object.keys(services).length > 0;
+  const hasLocal = local.services.length + local.proxies.length > 0;
+  if (hasCompose) {
+    const containers = Object.keys(services).filter((n) => !containerProxies.includes(n));
+    const compose =
+      `# Generado por run.ts --plan desde los defineService de los casos. No lo edites a mano: cambia los scripts y vuelve a generarlo.\n` +
+      `# Servicios: ${containers.join(", ") || "ninguno"}. Proxies de evidencia: ${containerProxies.join(", ") || "ninguno"}.\n` +
+      `name: testcase` +
+      yaml({ services }) +
+      "\n";
+    writeFileSync(composePath, compose);
+  } else rmSync(composePath, { force: true });
+  if (hasLocal) {
+    mkdirSync(join(reportDir, "logs"), { recursive: true });
+    writeFileSync(
+      localPath,
+      JSON.stringify({ $comment: "Generado por run.ts --plan: procesos locales y proxies sin contenedor. Lo usa scripts/local.ts. No lo edites a mano.", ...local }, null, 2) + "\n",
+    );
+  } else rmSync(localPath, { force: true });
   writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
 
   const c = `podman compose -f ${composePath}`;
-  console.log(`compose.yaml escrito en ${composePath}\n`);
+  const l = `node ${scriptsDir}/local.ts`;
+  if (hasCompose) console.log(`compose.yaml escrito en ${composePath}`);
+  if (hasLocal) console.log(`local.json escrito en ${localPath} (${[...local.services.map((x) => x.name), ...local.proxies.map((x) => "proxy-" + x.service)].join(", ")})`);
+  if (!hasCompose && !hasLocal) console.log("No hay servicios que levantar: ningún contenedor, proceso local ni proxy.");
+  console.log("");
   if (envVars.size) console.log(`# Variables que deben existir en el entorno: ${[...envVars].join(", ")}\n`);
-  console.log(`# Levantar\n${c} up -d${builds ? " --build" : ""}\n`);
-  console.log(`# Detener, después de correr los casos. Primero los proxies, que escriben el HAR al detenerse:`);
-  if (proxies.length) console.log(`${c} stop ${proxies.join(" ")}`);
-  console.log(`${c} down\n`);
+  if (hasCompose || hasLocal) {
+    console.log("# Levantar");
+    if (hasCompose) console.log(`${c} up -d${builds ? " --build" : ""}`);
+    if (hasLocal) console.log(`${l} up --report ${reportPath}`);
+    console.log("");
+    console.log(`# Detener, después de correr los casos. Primero los proxies, que escriben el HAR al detenerse:`);
+    if (hasLocal) console.log(`${l} down --report ${reportPath}`);
+    if (containerProxies.length) console.log(`${c} stop ${containerProxies.join(" ")}`);
+    if (hasCompose) console.log(`${c} down`);
+    console.log("");
+  }
   if (pending.length) console.log("# Pendiente para el agente: registra en el reporte el resultado real de cada uno\n" + pending.map((p) => "#   " + p).join("\n"));
   process.exit(0);
 }

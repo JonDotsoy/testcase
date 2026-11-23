@@ -288,6 +288,7 @@ pre.code .k{color:var(--k)} pre.code .s{color:var(--s)} pre.code .n{color:var(--
   <section aria-labelledby="h-svc" style="display:flex;flex-direction:column;gap:10px">
     <div class="section-head"><div><h2 id="h-svc">Servicios</h2><p>Lo que declara la sección <code class="mono">services</code> del manifiesto. testmania provisiona algunos servicios como contenedores de Podman, con sus artefactos (migraciones, seeds, descriptores), y se conecta a otros que ya existen en hosts externos.<span id="svc-env"></span></p></div></div>
     <div class="svc-group"><div class="svc-group-h"><h3>Provisionados por testmania</h3><p id="svc-prov-note"></p></div><div class="services" id="services-prov"></div></div>
+    <div class="svc-group"><div class="svc-group-h"><h3>Procesos locales</h3><p>Comandos que testmania corre en esta máquina, sin contenedor. Se detienen al terminar.</p></div><div class="services" id="services-proc"></div></div>
     <div class="svc-group"><div class="svc-group-h"><h3>Conectados</h3><p>Servicios que ya existen en hosts externos. testmania solo verifica que respondan; no los levanta, no les carga datos y no los detiene.</p></div><div class="services" id="services-conn"></div></div>
   </section>
 
@@ -389,6 +390,15 @@ const SERVICES = REPORT.services.map(s=>{
       health:`${s.health.check} · listo en ${fmtMs(s.health.durationMs)}`, env, extra, start:up.startOffsetMs, end:up.startOffsetMs+up.durationMs,
       ready:s.readyMs, proxy:s.proxy, arts:s.artifacts.map(a=>({k:ART_LABEL[a.kind]||a.kind, src:a.source, d:a.description||"", start:a.startOffsetMs, end:a.startOffsetMs+a.durationMs}))};
   }
+  if(s.mode==="process"){
+    const env = (s.env||[]).map(e=>e.sensitive?`${e.name}${e.fromEnv?" ← $"+e.fromEnv:""}`:`${e.name}=${e.value}`).join(", ") || "sin variables";
+    const up = REPORT.timeline.find(t=>t.kind==="service.up" && t.ref===s.name) || {startOffsetMs:0, durationMs:s.readyMs||s.health.durationMs};
+    const pr = s.process;
+    return {name:s.name, mode:"proc", origin:s.command, endpoint:s.endpoint, health:`${s.health.check} · ${fmtMs(s.health.durationMs)}`, env,
+      extra:["carpeta", s.cwd||"."], pid: pr ? `${pr.pid}`+(pr.stoppedAt?` · detenido${pr.signal?" con "+pr.signal:""}`:" · corriendo")+(pr.log?` · salida en ${pr.log}`:"") : null,
+      deps: s.dependsOn&&s.dependsOn.length ? s.dependsOn.join(", ") : null,
+      proxy:s.proxy, start:up.startOffsetMs, end:up.startOffsetMs+up.durationMs, arts:(s.artifacts||[]).map(a=>({k:ART_LABEL[a.kind]||a.kind, src:a.source, d:a.description||"", start:a.startOffsetMs, end:a.startOffsetMs+a.durationMs}))};
+  }
   const chk = REPORT.timeline.find(t=>t.kind==="service.check" && t.ref===s.name) || {startOffsetMs:0, durationMs:s.health.durationMs};
   return {name:s.name, mode:"conn", origin:"host externo "+s.host, endpoint:s.endpoint, health:`${s.health.check} · ${fmtMs(s.health.durationMs)}`,
     version:s.version, extra: s.tls ? ["TLS", `${s.tls.version} · certificado válido hasta ${new Date(s.tls.validUntil+"T00:00:00Z").toLocaleDateString("es",{day:"numeric",month:"short",year:"numeric",timeZone:"UTC"})}`] : null,
@@ -453,17 +463,20 @@ const state = {uc:null, protos:new Set(["http","grpc","graphql","ws","sql"]), zo
   const fr = REQ.filter(r=>r.fail); $("#st-as-sub").textContent = (all.length-ok)+" fallidas en "+fr.length+" requests de "+new Set(fr.map(r=>r.uc)).size+" casos de uso";
   const card = s=>{
     const n = REQ.filter(r=>svcOf(r).includes(s.name)).length;
-    const rows = [[s.mode==="prov"?"imagen":"origen",s.origin],["endpoint",s.endpoint],["healthcheck",s.health]];
+    const rows = [[s.mode==="prov"?"imagen":s.mode==="proc"?"comando":"origen",s.origin],["endpoint",s.endpoint],["healthcheck",s.health]];
     if(s.env) rows.push(["entorno",s.env]); if(s.version) rows.push(["versión",s.version]); if(s.extra) rows.push(s.extra);
-    if(s.proxy) rows.push(["proxy de evidencia", `${s.proxy.image} · ${s.proxy.listen} → ${s.proxy.upstream}`+(s.proxy.evidence?` · ${s.proxy.evidence}`:"")]);
+    if(s.pid) rows.push(["pid",s.pid]); if(s.deps) rows.push(["depende de",s.deps]);
+    if(s.proxy) rows.push(["proxy de evidencia", `${s.proxy.engine==="local"?"proceso local"+(s.proxy.pid?" (pid "+s.proxy.pid+")":""):s.proxy.image} · ${s.proxy.listen} → ${s.proxy.upstream}`+(s.proxy.evidence?` · ${s.proxy.evidence}`:"")]);
     rows.push(["uso en la corrida", n+(n===1?" request":" requests")]);
-    return `<div class="svc ${s.mode}"><div class="svc-top"><span class="st" title="saludable"></span><b>${esc(s.name)}</b>${s.mode==="prov"?'<span class="kind prov">Provisionado · Podman</span>':'<span class="kind">Conectado</span>'}<span class="t num">${s.mode==="prov"?"listo en "+ms((s.arts.length?s.arts[s.arts.length-1].end:s.end)-s.start):"verificado"}</span></div>
+    return `<div class="svc ${s.mode}"><div class="svc-top"><span class="st" title="saludable"></span><b>${esc(s.name)}</b>${s.mode==="prov"?'<span class="kind prov">Provisionado · Podman</span>':s.mode==="proc"?'<span class="kind prov">Proceso local</span>':'<span class="kind">Conectado</span>'}<span class="t num">${s.mode!=="conn"?"listo en "+ms((s.arts.length?s.arts[s.arts.length-1].end:s.end)-s.start):"verificado"}</span></div>
       <dl>${rows.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
-      ${s.mode==="prov"?(s.arts.length?`<div class="arts"><span class="h">Artefactos provisionados</span>${s.arts.map(a=>`<div class="art"><span class="ak">${esc(a.k)}</span><code>${esc(a.src)}</code><span class="at num">${ms(a.end-a.start)}</span><span class="ad">${esc(a.d)}</span></div>`).join("")}</div>`:'<div class="arts"><span class="h">Artefactos provisionados</span><span class="note">Ninguno. El contenedor arranca vacío.</span></div>'):'<div class="unmanaged">No gestionado: testmania no lo levanta ni lo detiene, y no carga datos en él.</div>'}
+      ${s.mode==="proc"?(s.arts.length?`<div class="arts"><span class="h">Artefactos provisionados</span>${s.arts.map(a=>`<div class="art"><span class="ak">${esc(a.k)}</span><code>${esc(a.src)}</code><span class="ad">${esc(a.d)}</span></div>`).join("")}</div>`:'<div class="unmanaged">Proceso de esta máquina: testmania lo levanta en su carpeta, sigue su PID y lo detiene al terminar.</div>'):s.mode==="prov"?(s.arts.length?`<div class="arts"><span class="h">Artefactos provisionados</span>${s.arts.map(a=>`<div class="art"><span class="ak">${esc(a.k)}</span><code>${esc(a.src)}</code><span class="at num">${ms(a.end-a.start)}</span><span class="ad">${esc(a.d)}</span></div>`).join("")}</div>`:'<div class="arts"><span class="h">Artefactos provisionados</span><span class="note">Ninguno. El contenedor arranca vacío.</span></div>'):'<div class="unmanaged">No gestionado: testmania no lo levanta ni lo detiene, y no carga datos en él.</div>'}
     </div>`;};
   const prov = SERVICES.filter(s=>s.mode==="prov");
   $("#services-prov").innerHTML = prov.map(card).join("");
   $("#services-conn").innerHTML = SERVICES.filter(s=>s.mode==="conn").map(card).join("");
+  $("#services-proc").innerHTML = SERVICES.filter(s=>s.mode==="proc").map(card).join("");
+  $("#services-proc").closest(".svc-group").hidden = !SERVICES.some(s=>s.mode==="proc");
   $("#svc-env").innerHTML = (REPORT.manifest.envFiles||[]).length ? " Las variables se cargaron desde "+REPORT.manifest.envFiles.map(f=>`<code class="mono">${esc(f)}</code>`).join(", ")+"." : "";
   $("#services-prov").closest(".svc-group").hidden = !prov.length;
   $("#services-conn").closest(".svc-group").hidden = !SERVICES.some(s=>s.mode==="conn");
@@ -546,6 +559,10 @@ function renderTimeline(){
       html += lane("UP",s.name,s.start,s.end);
       s.arts.forEach(a=>{ html += lane(a.k==="migración"?"MIGRATE":a.k.toUpperCase(),s.name+" · "+a.src.split("/").pop(),a.start,a.end,"var(--pass)"); });
     });
+    if(SERVICES.some(s=>s.mode==="proc")){
+      html += `<div class="tl-group"><div class="g"><i class="d" style="background:var(--infra)"></i><span>Procesos locales</span></div><div></div></div>`;
+      SERVICES.filter(s=>s.mode==="proc").forEach(s=>{ html += lane("RUN",s.name,s.start,s.end); });
+    }
     html += `<div class="tl-group"><div class="g"><i class="d" style="background:var(--infra)"></i><span>Servicios conectados</span></div><div></div></div>`;
     SERVICES.filter(s=>s.mode==="conn").forEach(s=>{ html += lane("CHECK",s.name,s.start,s.end); });
     html += `<div class="tl-group"><div class="g"><i class="d" style="background:var(--infra)"></i><span>Preparación y cierre</span></div><div></div></div>`;
@@ -612,7 +629,7 @@ function renderDetail(){
         <div><dt>Duración</dt><dd>${ms(r.dur)}</dd></div>
         <div><dt>Inicio</dt><dd>+${ms(r.start)}</dd></div>
         <div><dt>Tamaño</dt><dd>${esc(r.size)}</dd></div>
-        <div><dt>Servicio</dt><dd>${svcOf(r).map(n=>n+(SERVICES.find(s=>s.name===n).mode==="prov"?" (provisionado)":" (conectado)")).join(" → ")}</dd></div>
+        <div><dt>Servicio</dt><dd>${svcOf(r).map(n=>n+({prov:" (provisionado)",proc:" (proceso local)"}[SERVICES.find(s=>s.name===n).mode]||" (conectado)")).join(" → ")}</dd></div>
       </dl>
     </div>
     <div class="d-sec">

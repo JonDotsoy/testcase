@@ -192,7 +192,7 @@ Campos comunes:
 | Campo | Tipo | Req. | Descripción |
 |---|---|---|---|
 | `name` | string | sí | Nombre en el manifiesto. |
-| `mode` | `provisioned` \| `connected` | sí | `provisioned` es un contenedor que levanta testmania. `connected` es un servicio que ya existe y testmania no gestiona. |
+| `mode` | `provisioned` \| `connected` \| `process` | sí | `provisioned` es un contenedor que levanta testmania. `connected` es un servicio que ya existe y testmania no gestiona. `process` es un comando de shell que testmania corre en la máquina local. |
 | `endpoint` | string | sí | Dirección usada por las pruebas. |
 | `health` | `{ check, status, durationMs }` | sí | Healthcheck ejecutado (`pg_isready`, `GET /healthz`…). `status` puede ser `healthy`, `unhealthy` o `timeout`. |
 | `requestCount` | integer | sí | Requests de la corrida que pasaron por este servicio. |
@@ -204,7 +204,7 @@ Campos de `provisioned`:
 | `image` | string | sí | Imagen de Podman con su tag. Si se construyó, el nombre que quedó (por ejemplo `localhost/testcase-pedidos-svc:latest`). |
 | `build` | `{ context, dockerfile? }` | no | La imagen se construyó desde un Dockerfile del proyecto. |
 | `ports` | `{ host, container, protocol? }[]` | no | Puertos publicados. |
-| `env` | `{ name, source, value?, sensitive?, secretRef? }[]` | no | Origen de cada variable: `manifest`, `env-file`, `inferred` (credenciales inferidas para imágenes conocidas) o `service-ref`. |
+| `env` | `{ name, source, value?, sensitive?, secretRef?, fromEnv? }[]` | no | Origen de cada variable: `manifest`, `env-file`, `inferred` (credenciales inferidas para imágenes conocidas) o `service-ref`. |
 | `dependsOn` | string[] | no | Servicios que deben estar listos antes. |
 | `storage` | `tmpfs` \| `volume` \| `none` | no | Almacenamiento del contenedor. |
 | `readyMs` | number | no | Tiempo hasta quedar listo, con los artefactos aplicados. |
@@ -218,9 +218,34 @@ Campos de `connected`:
 | `host` | string | sí | Host externo, por ejemplo `api.example.com`. |
 | `version` | string | no | Versión que reporta el servicio. |
 | `tls` | `{ version, validUntil }` | no | Datos del certificado, si el servicio usa TLS. |
-| `proxy` | `{ engine?, image, container?, listen, upstream, evidence? }` | no | Contenedor proxy (Podman por defecto) que se interpone entre las pruebas y el servicio para capturar la evidencia de cada request y response. Las pruebas llaman a `listen` y el proxy reenvía a `upstream`. |
+| `proxy` | [Proxy](#proxy) | no | Proxy que se interpone entre las pruebas y el servicio para capturar la evidencia de cada request y response. Las pruebas llaman a `listen` y el proxy reenvía a `upstream`. |
 
 testmania no carga artefactos en un servicio `connected`, no lo levanta y no lo detiene. Sí puede levantar un proxy delante de él: el proxy es suyo y se elimina al terminar, el servicio no.
+
+Campos de `process`:
+
+| Campo | Tipo | Req. | Descripción |
+|---|---|---|---|
+| `command` | string | sí | Comando de shell que levanta el servicio, por ejemplo `bun run dev`. |
+| `cwd` | string | no | Carpeta donde corre el comando, relativa a la raíz del proyecto. |
+| `port` | integer | no | Puerto local donde escucha. `endpoint` es `http://localhost:<port>`. |
+| `env` | igual que en `provisioned` | no | Variables que se suman al entorno del proceso. |
+| `dependsOn` | string[] | no | Servicios que deben estar listos antes. |
+| `artifacts` | [Artifact](#artifact)[] | no | Artefactos provisionados. |
+| `process` | `{ pid, startedAt, stoppedAt?, exitCode?, signal?, log? }` | no | El proceso que se levantó: su PID, cuándo arrancó y terminó, cómo terminó y dónde quedó su salida. |
+| `proxy` | [Proxy](#proxy) | no | Proxy de evidencia, si el servicio habla HTTP. Siempre es local (`engine: local`). |
+
+### Proxy
+
+| Campo | Tipo | Req. | Descripción |
+|---|---|---|---|
+| `engine` | `podman` \| `docker` \| `local` | no | `podman` (por defecto) o `docker` corren mitmdump en un contenedor. `local` corre `scripts/proxy.ts` como proceso, sin contenedor. |
+| `image` | string | con contenedor | Imagen del proxy. |
+| `container` | string | no | Nombre del contenedor. |
+| `pid` | integer | no | PID del proxy local mientras corre. |
+| `listen` | string | sí | Dirección local a la que se envían los requests, por ejemplo `http://localhost:18080`. |
+| `upstream` | string | sí | Servicio real al que se reenvían. |
+| `evidence` | string | no | HAR que escribe el proxy, relativo al reporte. |
 
 ### Artifact
 
@@ -1635,7 +1660,8 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
         "mode": {
           "enum": [
             "provisioned",
-            "connected"
+            "connected",
+            "process"
           ]
         },
         "endpoint": {
@@ -1750,6 +1776,10 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
                   "secretRef": {
                     "type": "string",
                     "pattern": "^sec_[0-9]+$"
+                  },
+                  "fromEnv": {
+                    "type": "string",
+                    "description": "Variable del entorno de la que sale el valor (fromEnv en defineService)."
                   }
                 }
               }
@@ -1777,40 +1807,7 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
               }
             },
             "proxy": {
-              "type": "object",
-              "required": [
-                "image",
-                "listen",
-                "upstream"
-              ],
-              "additionalProperties": false,
-              "description": "Contenedor proxy que captura la evidencia de los requests hacia este servicio. En un servicio provisionado, solo si habla HTTP.",
-              "properties": {
-                "engine": {
-                  "enum": [
-                    "podman",
-                    "docker"
-                  ],
-                  "default": "podman"
-                },
-                "image": {
-                  "type": "string"
-                },
-                "container": {
-                  "type": "string"
-                },
-                "listen": {
-                  "type": "string",
-                  "description": "Dirección local a la que se envían los requests, por ejemplo http://localhost:18080."
-                },
-                "upstream": {
-                  "type": "string"
-                },
-                "evidence": {
-                  "type": "string",
-                  "description": "Archivo de evidencia que escribe el proxy, relativo al reporte."
-                }
-              }
+              "$ref": "#/$defs/proxy"
             }
           },
           "required": [
@@ -1852,44 +1849,132 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
               }
             },
             "proxy": {
-              "type": "object",
-              "required": [
-                "image",
-                "listen",
-                "upstream"
-              ],
-              "additionalProperties": false,
-              "description": "Contenedor proxy que captura la evidencia de los requests hacia este servicio.",
-              "properties": {
-                "engine": {
-                  "enum": [
-                    "podman",
-                    "docker"
-                  ],
-                  "default": "podman"
-                },
-                "image": {
-                  "type": "string"
-                },
-                "container": {
-                  "type": "string"
-                },
-                "listen": {
-                  "type": "string",
-                  "description": "Dirección local a la que se envían los requests, por ejemplo http://localhost:18080."
-                },
-                "upstream": {
-                  "type": "string"
-                },
-                "evidence": {
-                  "type": "string",
-                  "description": "Archivo de evidencia que escribe el proxy, relativo al reporte."
-                }
-              }
+              "$ref": "#/$defs/proxy"
             }
           },
           "required": [
             "host"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "name": true,
+            "endpoint": true,
+            "health": true,
+            "requestCount": true,
+            "mode": {
+              "const": "process"
+            },
+            "command": {
+              "type": "string",
+              "description": "Comando de shell que levanta el servicio."
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Carpeta donde corre el comando, relativa a la raíz del proyecto."
+            },
+            "port": {
+              "type": "integer",
+              "description": "Puerto local donde escucha el proceso."
+            },
+            "env": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "source"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "enum": [
+                      "manifest",
+                      "env-file",
+                      "inferred",
+                      "service-ref"
+                    ]
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "sensitive": {
+                    "type": "boolean"
+                  },
+                  "secretRef": {
+                    "type": "string",
+                    "pattern": "^sec_[0-9]+$"
+                  },
+                  "fromEnv": {
+                    "type": "string",
+                    "description": "Variable del entorno de la que sale el valor (fromEnv en defineService)."
+                  }
+                }
+              }
+            },
+            "dependsOn": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "readyMs": {
+              "$ref": "#/$defs/ms"
+            },
+            "artifacts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/artifact"
+              }
+            },
+            "process": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "pid",
+                "startedAt"
+              ],
+              "description": "Proceso que levantó scripts/local.ts.",
+              "properties": {
+                "pid": {
+                  "type": "integer"
+                },
+                "startedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "stoppedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "exitCode": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "signal": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "log": {
+                  "type": "string",
+                  "description": "Salida del proceso, relativa al reporte."
+                }
+              }
+            },
+            "proxy": {
+              "$ref": "#/$defs/proxy"
+            }
+          },
+          "required": [
+            "command"
           ],
           "additionalProperties": false
         }
@@ -1934,6 +2019,62 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
         "durationMs": {
           "$ref": "#/$defs/ms"
         }
+      }
+    },
+    "proxy": {
+      "type": "object",
+      "required": [
+        "listen",
+        "upstream"
+      ],
+      "additionalProperties": false,
+      "description": "Proxy que captura la evidencia de los requests hacia este servicio: un contenedor (podman o docker, con image) o un proceso local (engine local, scripts/proxy.ts).",
+      "properties": {
+        "engine": {
+          "enum": [
+            "podman",
+            "docker",
+            "local"
+          ],
+          "default": "podman"
+        },
+        "image": {
+          "type": "string",
+          "description": "Imagen del contenedor proxy. No aplica con engine local."
+        },
+        "container": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer",
+          "description": "PID del proxy local mientras corre."
+        },
+        "listen": {
+          "type": "string",
+          "description": "Dirección local a la que se envían los requests, por ejemplo http://localhost:18080."
+        },
+        "upstream": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string",
+          "description": "Archivo de evidencia que escribe el proxy, relativo al reporte."
+        }
+      },
+      "if": {
+        "properties": {
+          "engine": {
+            "enum": [
+              "podman",
+              "docker"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "image"
+        ]
       }
     }
   }
