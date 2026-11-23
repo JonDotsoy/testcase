@@ -334,6 +334,71 @@ describe("report.html en el navegador", { skip: chromiumError ?? false, timeout:
     }
   });
 
+  it("Copiar en Estado copia la respuesta como mensaje HTTP, y Reproducir copia el request como fetch()", async () => {
+    const { chromium } = await import("playwright");
+    const { tempDir, ASSETS } = await import("./helpers.ts");
+    const { dir, cleanup } = tempDir();
+    const browser = await chromium.launch();
+    try {
+      const example = readJson(join(ASSETS, "report.example.json"));
+      const json = join(dir, "example.json");
+      writeJson(json, example);
+      const r = await runAsync(join(SCRIPTS, "render-report.ts"), [json], { cwd: dir });
+      assert.equal(r.code, 0, r.out);
+      const page = await browser.newPage();
+      await page.addInitScript(() => {
+        Object.defineProperty(navigator, "clipboard", { value: { writeText: async (t: string) => void ((window as any).__copied = t) } });
+      });
+      await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.fulfill({ status: 200, contentType: "text/css", body: "" }));
+      await page.goto("file://" + join(dir, "example.html"));
+      const copy = async (id: number) => {
+        await page.locator(`.tl-row[data-id="${id}"]`).click();
+        await page.locator('#detail [data-tab="res"]').click();
+        const btn = page.locator('#detail [data-copy="resHttp"]');
+        if (!(await btn.count())) return null;
+        await btn.click();
+        return page.evaluate(() => (window as any).__copied as string);
+      };
+
+      const http = example.requests.find((x: any) => x.protocol === "http" && x.response.headers.length && x.response.body.encoding === "json");
+      const msg = (await copy(http.id))!;
+      const [head, body] = msg.split("\n\n");
+      const lines = head.split("\n");
+      assert.equal(lines[0], `HTTP/1.1 ${http.response.status.code} ${http.response.status.reason}`.trim());
+      assert.deepEqual(lines.slice(1), http.response.headers.map((h: any) => `${h.name}: ${h.value}`));
+      assert.deepEqual(JSON.parse(body), http.response.body.value);
+
+      const gql = example.requests.find((x: any) => x.protocol === "graphql");
+      assert.match((await copy(gql.id))!, new RegExp(`^HTTP/[\\d.]+ ${gql.response.status.httpCode} OK\n`));
+
+      const grpc = example.requests.find((x: any) => x.protocol === "grpc");
+      assert.equal(await copy(grpc.id), null, "un request gRPC no tiene la copia HTTP");
+
+      // Reproducir → fetch: el código copiado corre y llama a fetch con la URL, el método, los headers y el body del request
+      const copyFetch = async (id: number) => {
+        await page.locator(`.tl-row[data-id="${id}"]`).click();
+        await page.locator('#detail [data-tab="rep"]').click();
+        const btn = page.locator('#detail [data-copy="fetch"]');
+        if (!(await btn.count())) return null;
+        await btn.click();
+        return page.evaluate(() => (window as any).__copied as string);
+      };
+      const post = example.requests.find((x: any) => x.protocol === "http" && x.request.body.encoding === "json");
+      const code = (await copyFetch(post.id))!;
+      let call: any;
+      await new Function("fetch", `return (async () => { ${code}; return res; })()`)(async (url: string, init: any) => ((call = { url, init }), "ok"));
+      assert.equal(call.url, post.url);
+      assert.equal(call.init.method, post.method);
+      const sent = post.request.headers.filter((h: any) => !/^(host|content-length|connection|accept-encoding|transfer-encoding|keep-alive|upgrade|x-testcase-.*|:.*)$/i.test(h.name));
+      assert.deepEqual(Object.entries(call.init.headers), sent.map((h: any) => [h.name, h.value]));
+      assert.deepEqual(JSON.parse(call.init.body), post.request.body.value);
+      assert.equal(await copyFetch(grpc.id), null, "un request gRPC no tiene la copia fetch");
+    } finally {
+      await browser.close();
+      cleanup();
+    }
+  });
+
   it("muestra los procesos locales y los proxies sin contenedor", async () => {
     const { chromium } = await import("playwright");
     const { tempDir, ASSETS } = await import("./helpers.ts");
