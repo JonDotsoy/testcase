@@ -161,6 +161,34 @@ describe("run.ts: carga de los casos", () => {
     ));
 });
 
+describe("run.ts: pasos saltados", () => {
+  it("guarda los pasos saltados en el caso y lo dice en la salida", () => {
+    const p = project({
+      "UC-01.case.ts": caseSource(`await defineCase(async () => {
+  await title("Con pasos saltados");
+  await given("a");
+  await when("b");
+  await then.skip("llega el correo", () => { throw new Error("no debería correr"); });
+  await then("c");
+});`),
+    });
+    try {
+      const r = p.cases([]);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /UC-01 Con pasos saltados: 0\/0 aserciones ok · 1 paso saltado/);
+      const uc = p.report().useCases[0];
+      assert.deepEqual(uc.skippedSteps, [{ paso: "then", description: "llega el correo" }]);
+      assert.equal(uc.then, "llega el correo y c");
+      // Si el script deja de saltarlo, la siguiente corrida lo quita
+      writeFileSync(join(p.tc, "cases", "UC-01.case.ts"), simple("Con pasos saltados"));
+      assert.equal(p.cases([]).code, 0);
+      assert.equal(p.report().useCases[0].skippedSteps, undefined);
+    } finally {
+      p.cleanup();
+    }
+  });
+});
+
 describe("run.ts --plan", () => {
   it("pasa los servicios del ejemplo al reporte y escribe compose.yaml", () => {
     const p = project({ "UC-01.case.ts": EXAMPLE });

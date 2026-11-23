@@ -119,6 +119,8 @@ export type Text = string | Promise<string> | (() => string | Promise<string>);
 export interface CaseStep {
   paso: Paso;
   description: string;
+  /** Declarado con `given.skip()`, `when.skip()` o `then.skip()`: queda en el caso pero no se ejecuta. */
+  skipped?: true;
 }
 
 /** Caso declarado con `defineCase(async () => { … })`. `run.ts` completa el id con el nombre del archivo si falta. */
@@ -280,27 +282,29 @@ export async function id(value: Text): Promise<void> {
   if (d) d.id = await text(value, "id");
 }
 
-function runStep<T>(paso: Paso, description: Text, fn?: StepFn<T>): Promise<T> {
-  if (fn !== undefined && typeof fn !== "function") throw new Error(`${paso}(): el segundo argumento debe ser una función.`);
+function runStep<T>(paso: Paso, description: Text, fn?: StepFn<T>, skip = false): Promise<T> {
+  const name = skip ? `${paso}.skip` : paso;
+  if (fn !== undefined && typeof fn !== "function") throw new Error(`${name}(): el segundo argumento debe ser una función.`);
   // El texto puede ser una promesa: para los errores inmediatos se usa el texto si ya es un string
   const quick = typeof description === "string" ? description.trim() : "…";
   const r0 = running.getStore();
   // Se revisa antes de devolver la promesa: un paso sin await deja el anterior en curso
-  if (r0?.step && !inStep.getStore()) throw new Error(`Falta await antes de ${r0.step}: ${paso}("${quick}") empezó con el paso anterior todavía corriendo.`);
-  const { d, r } = draftOrRun(paso);
+  if (r0?.step && !inStep.getStore()) throw new Error(`Falta await antes de ${r0.step}: ${name}("${quick}") empezó con el paso anterior todavía corriendo.`);
+  const { d, r } = draftOrRun(name);
   if (d) {
     // El lugar del paso se reserva ya, para conservar el orden aunque el texto sea una promesa
-    const step: CaseStep = { paso, description: quick };
+    const step: CaseStep = { paso, description: quick, ...(skip ? { skipped: true as const } : {}) };
     d.steps.push(step);
-    const p = text(description, paso).then((desc) => ((step.description = desc), placeholder as T));
+    const p = text(description, name).then((desc) => ((step.description = desc), (skip ? null : placeholder) as T));
     d.pending.push(p);
     p.catch(() => {}); // defineCase lo informa
     return p;
   }
-  r!.step = `${paso}("${quick}")`; // marca el paso en curso ya, antes de resolver el texto
+  r!.step = `${name}("${quick}")`; // marca el paso en curso ya, antes de resolver el texto
   const p = (async () => {
     try {
-      const desc = await text(description, paso);
+      const desc = await text(description, name);
+      if (skip) return null as T; // saltado: no corre su función ni hace requests
       const label = `${paso}("${desc}")`;
       r!.step = label;
       const t = r!.t;
@@ -328,6 +332,18 @@ export function when<T = void>(description: Text, fn?: StepFn<T>): Promise<T> {
 export function then<T = void>(description: Text, fn?: StepFn<T>): Promise<T> {
   return runStep("then", description, fn);
 }
+
+/**
+ * Paso saltado: `given.skip()`, `when.skip()` y `then.skip()` reciben lo mismo que el paso, pero no lo ejecutan.
+ * El paso sigue en el caso (su texto queda en given/when/then del reporte) y el caso queda pendiente
+ * con los pasos saltados, salvo que otro paso falle. Devuelve siempre `null`, también al registrar los pasos:
+ * si otro paso usa su valor, sáltalo también.
+ *
+ *   await then.skip("el correo de confirmación llega", async () => …); // todavía no hay buzón de prueba
+ */
+given.skip = <T = void>(description: Text, fn?: StepFn<T>): Promise<null> => runStep("given", description, fn, true) as Promise<null>;
+when.skip = <T = void>(description: Text, fn?: StepFn<T>): Promise<null> => runStep("when", description, fn, true) as Promise<null>;
+then.skip = <T = void>(description: Text, fn?: StepFn<T>): Promise<null> => runStep("then", description, fn, true) as Promise<null>;
 
 /* ---------- servicios: defineService ---------- */
 

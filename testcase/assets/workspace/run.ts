@@ -481,6 +481,9 @@ for (const { def, file } of defs) {
   });
   if (def.description) uc.description = def.description;
   else delete uc.description;
+  const skipped = def.steps.filter((s) => s.skipped).map((s) => ({ paso: s.paso, description: s.description }));
+  if (skipped.length) uc.skippedSteps = skipped;
+  else delete uc.skippedSteps;
   delete uc.failure;
   delete uc.pending;
 }
@@ -513,7 +516,8 @@ for (const { def, file } of defs) {
   if (error && !requestTags.length) uc.pending = { reason: "skipped", message: maskSensitive(error) };
   results.push({ id: def.id, file, durationMs: Date.now() - t0, error, requestTags, checks, notations });
   const failed = checks.filter((c) => !c.passed).length;
-  console.log(`${def.id} ${def.title}: ${checks.length - failed}/${checks.length} aserciones ok${error ? " · " + maskSensitive(error) : ""}`);
+  const skippedSteps = def.steps.filter((s) => s.skipped).length;
+  console.log(`${def.id} ${def.title}: ${checks.length - failed}/${checks.length} aserciones ok${skippedSteps ? ` · ${skippedSteps} paso${skippedSteps === 1 ? "" : "s"} saltado${skippedSteps === 1 ? "" : "s"}` : ""}${error ? " · " + maskSensitive(error) : ""}`);
 }
 await browser?.close();
 
