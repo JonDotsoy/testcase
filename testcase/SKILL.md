@@ -113,7 +113,7 @@ La API completa:
 | | |
 |---|---|
 | `await defineCase(async () => { … })` | Declara el caso. Al cargar el archivo, recorre su función **sin ejecutar los pasos** para registrar el título y los pasos (cada `await given(…)` devuelve un valor vacío que acepta cualquier propiedad). Al correr el caso la ejecuta de nuevo, ahora con los pasos de verdad. Un archivo puede tener varios `defineCase` (por ejemplo `pedidos.case.ts` con UC-04 y UC-05 que comparten servicios). |
-| `await title(texto)` · `await title(() => texto)` | Título del caso. Una vez por caso. |
+| `await title(texto)` · `await title(() => texto)` | Título del caso. Una vez por caso. Como en `describe`, `id` y los pasos, el texto puede ser un `string`, una `Promise<string>` o una función que devuelve cualquiera de los dos: `await title(leerTitulo())`. |
 | `await describe(texto)` | Descripción del caso, más larga que el título: el contexto, la regla de negocio o por qué importa. Opcional, una vez por caso. Aparece en el reporte bajo el título. |
 | `await id("UC-NN")` | Si el archivo tiene un solo caso, es opcional: el id sale del nombre (`UC-03.case.ts` → `UC-03`). Si tiene varios, cada caso declara el suyo. |
 | `await given(texto, fn?)` · `await when(…)` · `await then(…)` | Pasos. Corren en el orden en que se escriben y devuelven lo que devuelve `fn`: `const login = await given("…", async () => api.post(…))`. `fn` es opcional: `await given("un pedido de María")` deja el paso solo como texto. Sin `await`, o con un paso dentro de otro, el caso falla con un mensaje claro. Los requests, `check`, `ensure` y `page()` van dentro de un paso. |

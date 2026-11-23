@@ -95,7 +95,8 @@ export interface CaseContext {
 
 /** Función de un paso. Recibe el contexto del caso. Lo que devuelve es el valor de `await given(…)`. */
 export type StepFn<T = unknown> = (t: CaseContext) => T | Promise<T>;
-type Text = string | (() => string);
+/** Texto de title(), describe(), id() y los pasos: un string, una promesa de string o una función que devuelve cualquiera de los dos. */
+export type Text = string | Promise<string> | (() => string | Promise<string>);
 
 export interface CaseStep {
   paso: Paso;
@@ -126,6 +127,8 @@ interface Draft {
   description?: string;
   annotations: Annotations;
   steps: CaseStep[];
+  /** Textos de pasos que todavía se resuelven (promesas de string). */
+  pending: Promise<unknown>[];
   /** `vars` mientras se registran los pasos. */
   vars: Record<string, any>;
 }
@@ -153,8 +156,8 @@ const placeholder: any = new Proxy(function () {}, {
   set: () => true,
 });
 
-const text = (v: Text, fn: string): string => {
-  const s = typeof v === "function" ? v() : v;
+const text = async (v: Text, fn: string): Promise<string> => {
+  const s = await (typeof v === "function" ? v() : v);
   if (typeof s !== "string" || !s.trim()) throw new Error(`${fn}() necesita un texto no vacío.`);
   return s.trim();
 };
@@ -189,9 +192,10 @@ export async function takeDefinedCases(): Promise<CaseDefinition[]> {
 export function defineCase(body: () => unknown | Promise<unknown>): Promise<CaseDefinition> {
   if (collecting.getStore() || running.getStore()) throw new Error("defineCase() no se puede anidar.");
   if (typeof body !== "function") throw new Error("defineCase() necesita una función.");
-  const d: Draft = { annotations: {}, steps: [], vars: {} };
+  const d: Draft = { annotations: {}, steps: [], pending: [], vars: {} };
   const p = collecting.run(d, async () => {
     await body();
+    await Promise.all(d.pending); // pasos sin await y textos que eran promesas
     if (!d.title) throw new Error("Falta title() en defineCase().");
     for (const paso of ["given", "when", "then"] as const) {
       if (!d.steps.some((s) => s.paso === paso)) throw new Error(`"${d.title}": falta al menos un ${paso}().`);
@@ -232,47 +236,56 @@ function draftOrRun(fn: string): { d?: Draft; r?: Running } {
   return { d, r };
 }
 
-/** Título del caso, en palabras de la persona. Acepta un texto o una función que lo devuelve. */
+/** Título del caso, en palabras de la persona. Acepta un texto, una promesa de texto o una función que devuelve cualquiera de los dos. */
 export async function title(value: Text): Promise<void> {
   const { d } = draftOrRun("title");
   if (!d) return;
   if (d.title) throw new Error("title() se declara una sola vez por caso.");
-  d.title = text(value, "title");
+  d.title = await text(value, "title");
 }
 
 /**
  * Descripción del caso, más larga que el título: el contexto, la regla de negocio o por qué importa.
- * Opcional, una vez por caso. Acepta un texto o una función que lo devuelve. Aparece en el reporte bajo el título.
+ * Opcional, una vez por caso. Acepta un texto, una promesa de texto o una función que devuelve cualquiera de los dos.
+ * Aparece en el reporte bajo el título.
  */
 export async function describe(value: Text): Promise<void> {
   const { d } = draftOrRun("describe");
   if (!d) return;
   if (d.description) throw new Error("describe() se declara una sola vez por caso.");
-  d.description = text(value, "describe");
+  d.description = await text(value, "describe");
 }
 
 /** Id del caso (UC-NN). Opcional: por defecto sale del nombre del archivo. */
-export async function id(value: string): Promise<void> {
+export async function id(value: Text): Promise<void> {
   const { d } = draftOrRun("id");
-  if (d) d.id = text(value, "id");
+  if (d) d.id = await text(value, "id");
 }
 
 function runStep<T>(paso: Paso, description: Text, fn?: StepFn<T>): Promise<T> {
   if (fn !== undefined && typeof fn !== "function") throw new Error(`${paso}(): el segundo argumento debe ser una función.`);
-  const desc = text(description, paso);
+  // El texto puede ser una promesa: para los errores inmediatos se usa el texto si ya es un string
+  const quick = typeof description === "string" ? description.trim() : "…";
   const r0 = running.getStore();
   // Se revisa antes de devolver la promesa: un paso sin await deja el anterior en curso
-  if (r0?.step && !inStep.getStore()) throw new Error(`Falta await antes de ${r0.step}: ${paso}("${desc}") empezó con el paso anterior todavía corriendo.`);
+  if (r0?.step && !inStep.getStore()) throw new Error(`Falta await antes de ${r0.step}: ${paso}("${quick}") empezó con el paso anterior todavía corriendo.`);
   const { d, r } = draftOrRun(paso);
   if (d) {
-    d.steps.push({ paso, description: desc });
-    return Promise.resolve(placeholder as T);
+    // El lugar del paso se reserva ya, para conservar el orden aunque el texto sea una promesa
+    const step: CaseStep = { paso, description: quick };
+    d.steps.push(step);
+    const p = text(description, paso).then((desc) => ((step.description = desc), placeholder as T));
+    d.pending.push(p);
+    p.catch(() => {}); // defineCase lo informa
+    return p;
   }
-  const label = `${paso}("${desc}")`;
-  r!.step = label;
-  const t = r!.t;
+  r!.step = `${paso}("${quick}")`; // marca el paso en curso ya, antes de resolver el texto
   const p = (async () => {
     try {
+      const desc = await text(description, paso);
+      const label = `${paso}("${desc}")`;
+      r!.step = label;
+      const t = r!.t;
       await t.step(paso);
       return fn ? await inStep.run(label, () => active.run(t, () => fn(t))) : (undefined as T);
     } finally {

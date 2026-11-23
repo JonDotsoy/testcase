@@ -103,6 +103,26 @@ describe("defineCase", () => {
     assert.deepEqual(await takeDefinedCases(), [], "takeDefinedCases vacía la lista");
   });
 
+  it("title, describe, id y los pasos aceptan string, Promise<string> o una función que devuelve cualquiera", async () => {
+    await takeDefinedCases();
+    const later = (v: string) => new Promise<string>((ok) => setTimeout(() => ok(v), 5));
+    const def = await defineCase(async () => {
+      await id(later("UC-42"));
+      await title(async () => "Título " + (await later("async")));
+      await describeCase(later("Descripción en una promesa"));
+      await given(later("un pedido"));
+      await when(() => later("se cancela"), async () => "ok");
+      await then("responde 403");
+    });
+    await takeDefinedCases();
+    assert.equal(def.id, "UC-42");
+    assert.equal(def.title, "Título async");
+    assert.equal(def.description, "Descripción en una promesa");
+    assert.deepEqual(def.steps.map((s) => s.description), ["un pedido", "se cancela", "responde 403"]);
+    await assert.rejects(defineCase(async () => (await title(later("  ")), await given("a"))), /title\(\) necesita un texto no vacío/);
+    await takeDefinedCases().catch(() => {});
+  });
+
   it("takeDefinedCases espera a los defineCase sin await y deja el id vacío si no se declara", async () => {
     defineCase(async () => {
       await title("sin await");
