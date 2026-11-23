@@ -374,6 +374,41 @@ describe("contexto de un caso", () => {
     assert.match(String(by["lanza"].expected), /^\(v\) => v\.id === 1 \(lanzó: .*null/);
   });
 
+  it("given.skip, when.skip y then.skip registran el paso pero no lo ejecutan", async () => {
+    const ran: string[] = [];
+    const api = await defineService({ name: "api", endpoint: "https://api.example.com" });
+    let saltado: unknown = "sin tocar";
+    const def = await defineCase(async () => {
+      await id("UC-09");
+      await title("x");
+      await given("un pedido", () => (ran.push("given"), api.get("/pedido")));
+      await given.skip(Promise.resolve("un buzón de prueba"), () => ran.push("given.skip"));
+      saltado = await when.skip("se envía el correo", () => (ran.push("when.skip"), api.post("/correo")));
+      await when("se cancela", () => ran.push("when"));
+      await then.skip("llega el correo", () => ran.push("then.skip"));
+      await then("responde 403", () => ran.push("then"));
+    });
+    assert.deepEqual(
+      def.steps.map((s) => [s.paso, s.description, s.skipped ?? false]),
+      [
+        ["given", "un pedido", false],
+        ["given", "un buzón de prueba", true],
+        ["when", "se envía el correo", true],
+        ["when", "se cancela", false],
+        ["then", "llega el correo", true],
+        ["then", "responde 403", false],
+      ],
+    );
+    assert.equal(def.given, "un pedido y un buzón de prueba", "el texto del paso saltado sigue en el caso");
+    await takeDefinedCases();
+    const r = runCase(def);
+    await def.run(r.ctx.t);
+    assert.deepEqual(ran, ["given", "when", "then"]);
+    assert.equal(saltado, undefined, "un paso saltado devuelve undefined al correr");
+    assert.deepEqual(r.calls.map((c) => c.path), ["pedido"], "no hace sus requests");
+    assert.throws(() => then.skip("x"), /then.skip\(\) solo se usa dentro de defineCase/);
+  });
+
   it("cookies arma el header Cookie y se suma a uno que ya venga en headers", async () => {
     const api = await defineService({ name: "api", endpoint: "https://api.example.com" });
     const def = await defineCase(async () => {
