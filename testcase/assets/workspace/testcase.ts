@@ -72,6 +72,72 @@ export interface TrackedResponse {
   text(): Promise<string>;
 }
 
+/** Opciones de `servicio.graphql.query()` y `.mutation()`. */
+export interface GraphQLOptions extends Omit<RequestOptions, "data" | "form" | "params"> {
+  variables?: Record<string, unknown>;
+  /** Operación a ejecutar cuando el documento tiene varias. */
+  operationName?: string;
+  /** Ruta del endpoint. Por defecto la de `defineService({ graphql })`, o `/graphql`. */
+  path?: string;
+}
+
+export interface GraphQLError {
+  message: string;
+  path?: (string | number)[];
+  locations?: { line: number; column: number }[];
+  extensions?: Record<string, any>;
+}
+
+/** Respuesta de GraphQL: la misma `TrackedResponse` con `data` y `errors` a mano. */
+export interface GraphQLResponse<T = any> extends TrackedResponse {
+  /** `body.data`: `null` si la ejecución falló, `undefined` si la respuesta no es GraphQL. */
+  readonly data: T | null | undefined;
+  /** `body.errors`, si vino. Un error de GraphQL suele llegar con HTTP 200. */
+  readonly errors: GraphQLError[] | undefined;
+}
+
+/**
+ * Cliente GraphQL de un servicio. Hace POST JSON `{ query, variables, operationName }` a la ruta GraphQL del
+ * servicio, por su proxy, y el request queda en el reporte como GraphQL (QUERY o MUTATION con el nombre de la operación).
+ *
+ *   const res = await api.graphql.query(`query Pedido($id: ID!) { order(id: $id) { status } }`, { variables: { id } });
+ *   check("status", res.data?.order.status, "pending");
+ *
+ * `query()` acepta un documento `query …` o la forma corta `{ … }`; `mutation()`, uno `mutation …`. Si el documento
+ * no es del tipo que pide el método, el paso falla antes de enviar nada.
+ */
+export interface GraphQL {
+  query<T = any>(document: string, opts?: GraphQLOptions): Promise<GraphQLResponse<T>>;
+  mutation<T = any>(document: string, opts?: GraphQLOptions): Promise<GraphQLResponse<T>>;
+}
+
+type GraphQLOperation = { type: "query" | "mutation" | "subscription"; name?: string };
+
+/** Operaciones de un documento GraphQL (sin contar fragments), ignorando comentarios y strings. */
+export function graphqlOperations(document: string): GraphQLOperation[] {
+  const src = document
+    .replace(/"""[\s\S]*?"""/g, '""')
+    .replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/#[^\n]*/g, "");
+  const ops: GraphQLOperation[] = [];
+  let depth = 0;
+  let header = ""; // texto de nivel superior desde el último bloque
+  for (const c of src) {
+    if (c === "{") {
+      if (depth === 0) {
+        const m = /^\s*(query|mutation|subscription|fragment)\b\s*([A-Za-z_]\w*)?/.exec(header);
+        if (!m) ops.push({ type: "query" }); // forma corta: { … }
+        else if (m[1] !== "fragment") ops.push({ type: m[1] as GraphQLOperation["type"], ...(m[2] ? { name: m[2] } : {}) });
+      }
+      depth++;
+    } else if (c === "}") {
+      depth--;
+      if (depth === 0) header = "";
+    } else if (depth === 0) header += c;
+  }
+  return ops;
+}
+
 export interface Api {
   get(path: string, opts?: RequestOptions): Promise<TrackedResponse>;
   post(path: string, opts?: RequestOptions): Promise<TrackedResponse>;
@@ -350,6 +416,11 @@ interface ServiceBase {
   name: string;
   /** Healthcheck que corre el agente (por ejemplo `GET /healthz` o `pg_isready`). */
   health?: string;
+  /**
+   * El servicio habla GraphQL: `servicio.graphql.query()` y `.mutation()` hacen POST a esta ruta.
+   * `true` usa `/graphql`. Un contenedor con `graphql` es HTTP aunque no declare `http: true`.
+   */
+  graphql?: true | { path: string };
 }
 
 /** Servicio que ya existe (por ejemplo `https://api.example.com`). No se levanta ni se le cargan datos. */
@@ -432,7 +503,7 @@ export function serviceKind(def: ServiceDefinition): "connected" | "provisioned"
 /** El servicio habla HTTP: tiene proxy de evidencia y métodos get/post… */
 export function isHttpService(def: ServiceDefinition): boolean {
   const kind = serviceKind(def);
-  if (kind === "connected") return true;
+  if (kind === "connected" || def.graphql) return true;
   if (kind === "process") return (def as ProcessServiceDefinition).http ?? (def as ProcessServiceDefinition).port != null;
   return !!(def as ProvisionedServiceDefinition).http;
 }
@@ -443,6 +514,8 @@ export interface Service extends Api {
   readonly definition: ServiceDefinition;
   /** URL del servicio a través de su proxy, para `page.goto()`. */
   url(path?: string): string;
+  /** Cliente GraphQL del servicio: `query()` y `mutation()`. Ver {@link GraphQL}. */
+  readonly graphql: GraphQL;
 }
 
 const declared = new Map<string, ServiceDefinition>();
@@ -505,7 +578,38 @@ function registerService(def: ServiceDefinition): Service {
     patch: (p, o) => http().patch(p, o),
     delete: (p, o) => http().delete(p, o),
     fetch: (p, o) => http().fetch(p, o),
+    graphql: {
+      query: (d, o) => graphqlCall(http(), def, "query", d, o),
+      mutation: (d, o) => graphqlCall(http(), def, "mutation", d, o),
+    },
   };
+}
+
+async function graphqlCall(api: Api, def: ServiceDefinition, kind: "query" | "mutation", document: string, o: GraphQLOptions = {}): Promise<GraphQLResponse> {
+  const where = `${def.name}.graphql.${kind}()`;
+  if (typeof document !== "string" || !document.trim()) throw new Error(`${where} necesita el documento GraphQL.`);
+  const ops = graphqlOperations(document);
+  if (!ops.length) throw new Error(`${where}: el documento no tiene ninguna operación.`);
+  let op = ops[0];
+  if (o.operationName != null) {
+    const found = ops.find((x) => x.name === o.operationName);
+    if (!found) throw new Error(`${where}: el documento no tiene la operación "${o.operationName}" (tiene ${ops.map((x) => x.name ?? "anónima").join(", ")}).`);
+    op = found;
+  } else if (ops.length > 1) throw new Error(`${where}: el documento tiene ${ops.length} operaciones; indica cuál con operationName.`);
+  if (op.type !== kind) {
+    const use = op.type === "subscription" ? "las subscriptions no van por graphql.query() ni .mutation()" : `usa graphql.${op.type}()`;
+    throw new Error(`${where}: la operación ${op.name ?? "anónima"} es una ${op.type}; ${use}.`);
+  }
+  const { variables, operationName, path, headers, ...rest } = o;
+  const route = path ?? (typeof def.graphql === "object" ? def.graphql.path : undefined) ?? "/graphql";
+  const name = operationName ?? op.name;
+  const res = await api.post(route, {
+    ...rest,
+    headers: { accept: "application/graphql-response+json, application/json", ...(headers ?? {}) },
+    data: { query: document, ...(variables ? { variables } : {}), ...(name ? { operationName: name } : {}) },
+  });
+  const body = res.body && typeof res.body === "object" ? res.body : undefined;
+  return Object.assign(res, { data: body ? body.data : undefined, errors: Array.isArray(body?.errors) ? body.errors : undefined });
 }
 
 function normalizeDef(def: ServiceDefinition): unknown {

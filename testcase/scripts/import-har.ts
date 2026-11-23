@@ -214,9 +214,11 @@ const skipped: string[] = [];
   let status: Json = { kind: "http", label: `${e.response.status} ${e.response.statusText}`.trim(), code: e.response.status, reason: e.response.statusText || "" };
   let shownTarget = target;
   if (isGraphql) {
-    const q: string = reqBody.value.query;
-    method = (q.trim().match(/^(query|mutation|subscription)\b/i)?.[1] ?? "query").toUpperCase();
-    shownTarget = reqBody.value.operationName ?? q.trim().match(/^(?:query|mutation|subscription)\s+(\w+)/i)?.[1] ?? "anónima";
+    const ops = graphqlOperations(reqBody.value.query);
+    const opName: string | undefined = reqBody.value.operationName ?? undefined;
+    const op = (opName ? ops.find((o) => o.name === opName) : undefined) ?? ops[0];
+    method = (op?.type ?? "query").toUpperCase();
+    shownTarget = opName ?? op?.name ?? "anónima";
     (reqBody as Json).encoding = "graphql";
     const v = resBody.value ?? {};
     const errorCount = Array.isArray(v.errors) ? v.errors.length : 0;
@@ -301,3 +303,30 @@ if (runChecks.length) console.log(`Aserciones unidas a sus requests: ${attached}
 if (runNotations.length) console.log(`Anotaciones unidas a sus requests: ${notationsAttached} de ${runNotations.length}.`);
 if (orphan.length) console.log(`Aserciones o anotaciones sin request en esta evidencia (¿otro servicio o el proxy no las capturó?):\n  - ${orphan.join("\n  - ")}`);
 console.log(runChecks.length ? "Ahora corre sync-report.ts." : "Agrega las aserciones de cada request y corre sync-report.ts.");
+
+type GraphQLOperation = { type: "query" | "mutation" | "subscription"; name?: string };
+
+/** Operaciones de un documento GraphQL (sin contar fragments), ignorando comentarios y strings. Igual que en testcase.ts. */
+function graphqlOperations(document: string): GraphQLOperation[] {
+  const src = document
+    .replace(/"""[\s\S]*?"""/g, '""')
+    .replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/#[^\n]*/g, "");
+  const ops: GraphQLOperation[] = [];
+  let depth = 0;
+  let header = ""; // texto de nivel superior desde el último bloque
+  for (const c of src) {
+    if (c === "{") {
+      if (depth === 0) {
+        const m = /^\s*(query|mutation|subscription|fragment)\b\s*([A-Za-z_]\w*)?/.exec(header);
+        if (!m) ops.push({ type: "query" }); // forma corta: { … }
+        else if (m[1] !== "fragment") ops.push({ type: m[1] as GraphQLOperation["type"], ...(m[2] ? { name: m[2] } : {}) });
+      }
+      depth++;
+    } else if (c === "}") {
+      depth--;
+      if (depth === 0) header = "";
+    } else if (depth === 0) header += c;
+  }
+  return ops;
+}

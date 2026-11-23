@@ -72,6 +72,8 @@ await defineCase(async () => {
 });
 ```
 
+Un servicio GraphQL (`defineService({ …, graphql: true })`) tiene `api.graphql.query(doc, { variables })` y `api.graphql.mutation(doc)`, que devuelven la respuesta con `data` y `errors`.
+
 `check` registra la aserción y sigue; `ensure` detiene el caso si falla. El esperado es un valor (igualdad profunda) o un validador: una función, o uno de los listos (`instanceOf`, `between`, `satisfies`).
 
 ### Servicios

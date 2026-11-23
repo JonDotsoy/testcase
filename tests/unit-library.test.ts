@@ -448,6 +448,92 @@ describe("contexto de un caso", () => {
     assert.deepEqual(cookies.toJSON(), { tema: "oscuro" }, "el logout borró la sesión del mismo objeto");
   });
 
+  it("graphql.query y .mutation hacen POST a la ruta GraphQL con query, variables y operationName", async () => {
+    const gql = await defineService({ name: "gql", endpoint: "https://shop.example.com", graphql: { path: "/api/graphql" } });
+    const def = await defineCase(async () => {
+      await id("UC-07");
+      await title("x");
+      const pedido = await given("consulta el pedido", () =>
+        gql.graphql.query<{ order: { status: string } }>(
+          `# comentario: mutation no cuenta
+          query Pedido($id: ID!) { order(id: $id) { status note(text: "mutation {") } }`,
+          { variables: { id: "ord_1" }, headers: { authorization: "Bearer t" } },
+        ),
+      );
+      const cancela = await when("lo cancela", () => gql.graphql.mutation(`mutation { cancel(id: "ord_1") { ok } }`, { path: "/otra" }));
+      await then("responde", () => {
+        assert.equal(pedido.data?.order.status, "pending");
+        assert.equal(pedido.errors, undefined);
+        assert.equal(pedido.status(), 200);
+        assert.equal(cancela.data, null);
+        assert.equal(cancela.errors?.[0].extensions?.code, "FORBIDDEN");
+        check("código", cancela.errors?.[0].extensions?.code, "FORBIDDEN", { expectedFailure: true });
+      });
+    });
+    await takeDefinedCases();
+    const api = fakeApi((path) =>
+      path === "api/graphql"
+        ? { headers: { "content-type": "application/graphql-response+json" }, body: JSON.stringify({ data: { order: { status: "pending" } } }) }
+        : { body: JSON.stringify({ data: null, errors: [{ message: "no", extensions: { code: "FORBIDDEN" } }] }) },
+    );
+    const services = new Map<string, ServiceTarget>([["gql", { name: "gql", baseURL: "http://localhost:18081/", viaProxy: true }]]);
+    const checks: RecordedCheck[] = [];
+    const ctx = createContext({ def, services, newApi: api.newApi, getBrowser: async () => assert.fail("sin navegador"), checks, notations: [], requestTags: [] });
+    await def.run(ctx.t);
+    assert.deepEqual(api.calls.map((c) => [c.path, c.opts.method]), [["api/graphql", "POST"], ["otra", "POST"]]);
+    assert.deepEqual(api.calls[0].opts.data, {
+      query: `# comentario: mutation no cuenta
+          query Pedido($id: ID!) { order(id: $id) { status note(text: "mutation {") } }`,
+      variables: { id: "ord_1" },
+      operationName: "Pedido",
+    });
+    assert.equal(api.calls[0].opts.headers.authorization, "Bearer t");
+    assert.match(api.calls[0].opts.headers.accept, /application\/graphql-response\+json/);
+    assert.deepEqual(api.calls[1].opts.data, { query: `mutation { cancel(id: "ord_1") { ok } }` }, "sin nombre no manda operationName");
+    assert.equal(checks[0].tag, api.calls[1].opts.headers["x-testcase-request"], "la aserción queda en el request de la mutation");
+    assert.equal(isHttpService({ name: "c", image: "x", ports: [{ container: 4000 }], graphql: true }), true, "graphql implica http");
+  });
+
+  it("graphql revisa el tipo de operación antes de enviar", async () => {
+    const gql = await defineService({ name: "gql", endpoint: "https://shop.example.com", graphql: { path: "/api/graphql" } });
+    const doc = `query A { a } mutation B { b } fragment F on T { x }`;
+    const errors: string[] = [];
+    const def = await defineCase(async () => {
+      await id("UC-08");
+      await title("x");
+      await given("a", async () => {
+        for (const call of [
+          () => gql.graphql.query(`mutation { b }`),
+          () => gql.graphql.mutation(`{ a }`),
+          () => gql.graphql.query(doc),
+          () => gql.graphql.query(doc, { operationName: "C" }),
+          () => gql.graphql.query(`subscription S { s }`),
+          () => gql.graphql.query("  "),
+        ])
+          await call().catch((e: Error) => errors.push(e.message));
+        await gql.graphql.mutation(doc, { operationName: "B" });
+        await gql.graphql.query(`{ a }`);
+      });
+      await when("b");
+      await then("c");
+    });
+    await takeDefinedCases();
+    const api = fakeApi(() => ({ body: "{}" }));
+    const services = new Map<string, ServiceTarget>([["gql", { name: "gql", baseURL: "http://localhost:18081/", viaProxy: true }]]);
+    const ctx = createContext({ def, services, newApi: api.newApi, getBrowser: async () => assert.fail("sin navegador"), checks: [], notations: [], requestTags: [] });
+    await def.run(ctx.t);
+    assert.deepEqual(errors, [
+      "gql.graphql.query(): la operación anónima es una mutation; usa graphql.mutation().",
+      "gql.graphql.mutation(): la operación anónima es una query; usa graphql.query().",
+      "gql.graphql.query(): el documento tiene 2 operaciones; indica cuál con operationName.",
+      'gql.graphql.query(): el documento no tiene la operación "C" (tiene A, B).',
+      "gql.graphql.query(): la operación S es una subscription; las subscriptions no van por graphql.query() ni .mutation().",
+      "gql.graphql.query() necesita el documento GraphQL.",
+    ]);
+    assert.equal(api.calls.length, 2, "solo se envían las válidas");
+    assert.equal(api.calls[0].opts.data.operationName, "B");
+  });
+
   it("body: JSON parseado, texto si no es JSON, undefined si viene vacío", async () => {
     const api = await defineService({ name: "api", endpoint: "https://api.example.com" });
     const def = await defineCase(async () => {
