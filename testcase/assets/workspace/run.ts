@@ -55,6 +55,8 @@ const reportDir = dirname(reportPath);
 const report = JSON.parse(readFileSync(reportPath, "utf8"));
 const here = dirname(new URL(import.meta.url).pathname);
 const casesDir = join(here, "cases");
+// Raíz del proyecto (la carpeta que contiene .testcase/): fromEnvFile() resuelve sus rutas desde aquí
+process.env.TESTCASE_PROJECT_ROOT = dirname(reportDir);
 
 // Casos
 const files = existsSync(casesDir) ? readdirSync(casesDir).filter((f) => f.endsWith(".case.ts")).sort() : [];
@@ -120,7 +122,11 @@ const nextPort = (from: number) => {
 const isHttp = isHttpService;
 const envEntries = (env: Record<string, any> | undefined) =>
   Object.entries(env ?? {}).map(([name, v]) =>
-    typeof v === "string" ? { name, source: "manifest", value: v } : { name, source: "manifest", value: "••••", sensitive: true, fromEnv: v.fromEnv },
+    typeof v === "string"
+      ? { name, source: "manifest", value: v }
+      : v.envFile
+        ? { name, source: "env-file", value: "••••", sensitive: true, envFile: v.envFile }
+        : { name, source: "manifest", value: "••••", sensitive: true, fromEnv: v.fromEnv },
   );
 for (const d of declared) {
   const kind = serviceKind(d);
@@ -286,7 +292,10 @@ if (plan) {
       svc.container_name = `tc-${c.name}`;
       if (c.command) svc.command = c.command;
       if (s.ports.length) svc.ports = s.ports.map((p: any) => `${p.host}:${p.container}${p.protocol && p.protocol !== "tcp" ? "/" + p.protocol : ""}`);
-      const env = Object.entries(c.env ?? {});
+      // Las variables de fromEnvFile van por env_file: compose las lee del archivo al levantar
+      const envFiles = [...new Set(Object.values(c.env ?? {}).flatMap((v) => (typeof v === "object" && v.envFile ? [v.envFile] : [])))];
+      if (envFiles.length) svc.env_file = envFiles.map((f) => relative(reportDir, resolve(projectRoot, f)));
+      const env = Object.entries(c.env ?? {}).filter(([, v]) => !(typeof v === "object" && v.envFile));
       if (env.length) {
         svc.environment = Object.fromEntries(
           env.map(([k, v]) => {
@@ -311,6 +320,7 @@ if (plan) {
       const env = Object.fromEntries(
         Object.entries(p.env ?? {}).map(([k, v]) => {
           if (typeof v === "string") return [k, v];
+          if (v.envFile) return [k, { fromEnv: v.fromEnv, envFile: v.envFile }];
           envVars.add(v.fromEnv);
           return [k, { fromEnv: v.fromEnv }];
         }),
@@ -405,12 +415,17 @@ if (plan) {
   if (!hasCompose && !hasLocal) console.log("No hay servicios que levantar: ningún contenedor, proceso local ni proxy.");
   console.log("");
   if (envVars.size) console.log(`# Variables que deben existir en el entorno: ${[...envVars].join(", ")}\n`);
-  if (hasCompose || hasLocal) {
-    console.log("# Levantar");
+  if ((hasCompose || hasLocal) && !process.env.TESTCASE_AUTO_UP) {
+    const cs = `bun ${scriptsDir}/cases.ts --report ${reportPath}`;
+    console.log("# Con cases.ts: sin opciones levanta los servicios y corre los casos; los servicios quedan arriba");
+    console.log(`${cs} --only-up-services   # solo levantar`);
+    console.log(`${cs} --down-services      # apagar (los proxies escriben el HAR)`);
+    console.log("");
+    console.log("# A mano: levantar");
     if (hasCompose) console.log(`${c} up -d${builds ? " --build" : ""}`);
     if (hasLocal) console.log(`${l} up --report ${reportPath}`);
     console.log("");
-    console.log(`# Detener, después de correr los casos. Primero los proxies, que escriben el HAR al detenerse:`);
+    console.log(`# A mano: detener. Primero los proxies, que escriben el HAR al detenerse:`);
     if (hasLocal) console.log(`${l} down --report ${reportPath}`);
     if (containerProxies.length) console.log(`${c} stop ${containerProxies.join(" ")}`);
     if (hasCompose) console.log(`${c} down`);
@@ -466,6 +481,9 @@ for (const { def, file } of defs) {
   });
   if (def.description) uc.description = def.description;
   else delete uc.description;
+  const skipped = def.steps.filter((s) => s.skipped).map((s) => ({ paso: s.paso, description: s.description }));
+  if (skipped.length) uc.skippedSteps = skipped;
+  else delete uc.skippedSteps;
   delete uc.failure;
   delete uc.pending;
 }
@@ -498,7 +516,8 @@ for (const { def, file } of defs) {
   if (error && !requestTags.length) uc.pending = { reason: "skipped", message: maskSensitive(error) };
   results.push({ id: def.id, file, durationMs: Date.now() - t0, error, requestTags, checks, notations });
   const failed = checks.filter((c) => !c.passed).length;
-  console.log(`${def.id} ${def.title}: ${checks.length - failed}/${checks.length} aserciones ok${error ? " · " + maskSensitive(error) : ""}`);
+  const skippedSteps = def.steps.filter((s) => s.skipped).length;
+  console.log(`${def.id} ${def.title}: ${checks.length - failed}/${checks.length} aserciones ok${skippedSteps ? ` · ${skippedSteps} paso${skippedSteps === 1 ? "" : "s"} saltado${skippedSteps === 1 ? "" : "s"}` : ""}${error ? " · " + maskSensitive(error) : ""}`);
 }
 await browser?.close();
 

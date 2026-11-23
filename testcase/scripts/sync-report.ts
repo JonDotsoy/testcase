@@ -11,7 +11,8 @@
  *   - useCases[].requestIds           requests que apuntan al caso, en orden de inicio
  *   - useCases[].invocations          URLs y métodos invocados tal cual, agrupando solo los idénticos
  *   - useCases[].startOffsetMs / durationMs
- *   - useCases[].status               pending si no tiene requests, failed si alguno falló, passed en otro caso
+ *   - useCases[].status               pending si no tiene requests o tiene pasos saltados (skippedSteps), failed si alguno
+ *                                     falló, passed en otro caso
  *   - useCases[].failure              explicación determinista si falta o si cambió el fallo
  *   - services[].requestCount
  *   - timeline                        regenera los eventos "request" y ordena todo por inicio
@@ -92,9 +93,12 @@ for (const uc of report.useCases ?? []) {
   }
 
   const failing = rs.filter((r) => !r.passed);
+  const skipped = uc.skippedSteps?.length
+    ? { reason: "skipped", message: `${uc.skippedSteps.length === 1 ? "Se saltó un paso" : `Se saltaron ${uc.skippedSteps.length} pasos`}: ${uc.skippedSteps.map((s: Json) => `${s.paso} «${s.description}»`).join(", ")}.` }
+    : undefined;
   if (!rs.length) {
     uc.status = "pending";
-    uc.pending = uc.pending ?? { reason: "handler-not-implemented", message: "Todavía no se ejecutó ningún request para este caso." };
+    uc.pending = uc.pending ?? skipped ?? { reason: "handler-not-implemented", message: "Todavía no se ejecutó ningún request para este caso." };
     delete uc.failure;
   } else if (failing.length) {
     uc.status = "failed";
@@ -103,6 +107,11 @@ for (const uc of report.useCases ?? []) {
     const same = uc.failure && JSON.stringify(uc.failure.assertionIds) === JSON.stringify(assertionIds);
     uc.failure = { explanation: same ? uc.failure.explanation : explain(uc, failing), requestIds: ids, assertionIds };
     delete uc.pending;
+  } else if (skipped) {
+    // Lo que corrió pasó, pero faltan pasos: el caso no está completo
+    uc.status = "pending";
+    uc.pending = skipped;
+    delete uc.failure;
   } else {
     uc.status = "passed";
     delete uc.failure;

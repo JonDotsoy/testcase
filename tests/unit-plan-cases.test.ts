@@ -3,7 +3,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { caseSource, CASES, hasCommand, project, runScript, tempDir, WORKSPACE } from "./helpers.ts";
@@ -15,10 +15,28 @@ const simple = (t?: string) => caseSource(caseBody(t));
 const withServices = (services: string) => caseSource(caseBody(), services);
 
 describe("cases.ts: argumentos y scripts", () => {
-  it("sin --report muestra el uso", () => {
-    const r = runScript(CASES, []);
+  it("--help muestra el uso", () => {
+    const r = runScript(CASES, ["--help"]);
+    assert.equal(r.code, 0);
+    assert.match(r.out, /Uso: bun scripts\/cases.ts \[--report .testcase\/report.json\]/);
+    assert.match(r.out, /--only-up-services \| --down-services/);
+  });
+
+  it("sin --report usa .testcase/report.json", () => {
+    const { dir, cleanup } = tempDir();
+    try {
+      const r = runScript(CASES, [], { cwd: dir });
+      assert.equal(r.code, 1);
+      assert.match(r.stderr, /No existe .*\.testcase\/report.json/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("no combina modos", () => {
+    const r = runScript(CASES, ["--only-up-services", "--down-services"]);
     assert.equal(r.code, 1);
-    assert.match(r.out, /Uso: bun scripts\/cases.ts --report/);
+    assert.match(r.stderr, /No combines --only-up-services y --down-services/);
   });
 
   it("avisa si el reporte no existe", () => {
@@ -143,6 +161,34 @@ describe("run.ts: carga de los casos", () => {
     ));
 });
 
+describe("run.ts: pasos saltados", () => {
+  it("guarda los pasos saltados en el caso y lo dice en la salida", () => {
+    const p = project({
+      "UC-01.case.ts": caseSource(`await defineCase(async () => {
+  await title("Con pasos saltados");
+  await given("a");
+  await when("b");
+  await then.skip("llega el correo", () => { throw new Error("no debería correr"); });
+  await then("c");
+});`),
+    });
+    try {
+      const r = p.cases([]);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /UC-01 Con pasos saltados: 0\/0 aserciones ok · 1 paso saltado/);
+      const uc = p.report().useCases[0];
+      assert.deepEqual(uc.skippedSteps, [{ paso: "then", description: "llega el correo" }]);
+      assert.equal(uc.then, "llega el correo y c");
+      // Si el script deja de saltarlo, la siguiente corrida lo quita
+      writeFileSync(join(p.tc, "cases", "UC-01.case.ts"), simple("Con pasos saltados"));
+      assert.equal(p.cases([]).code, 0);
+      assert.equal(p.report().useCases[0].skippedSteps, undefined);
+    } finally {
+      p.cleanup();
+    }
+  });
+});
+
 describe("run.ts --plan", () => {
   it("pasa los servicios del ejemplo al reporte y escribe compose.yaml", () => {
     const p = project({ "UC-01.case.ts": EXAMPLE });
@@ -234,6 +280,33 @@ describe("run.ts --plan", () => {
     }
   });
 
+  it("fromEnvFile pasa a env_file en compose.yaml y queda como env-file en el reporte", () => {
+    const p = project({
+      "UC-01.case.ts": withServices(`await defineService({ name: "db", image: "postgres:16", env: { ...fromEnvFile("config/db.env", { only: ["PGPASSWORD"] }), PGUSER: "app" } });`),
+    });
+    try {
+      mkdirSync(join(p.dir, "config"));
+      writeFileSync(join(p.dir, "config", "db.env"), "PGPASSWORD='s3cr#to'\nOTRA=1\n");
+      const r = p.cases(["--plan"]);
+      assert.equal(r.code, 0, r.out);
+      const compose = readFileSync(join(p.tc, "compose.yaml"), "utf8");
+      assert.match(compose, /env_file:\n\s+- "\.\.\/config\/db\.env"/);
+      assert.doesNotMatch(compose, /PGPASSWORD|s3cr#to/);
+      assert.match(compose, /PGUSER: "app"/);
+      const db = p.report().services.find((s: any) => s.name === "db");
+      assert.deepEqual(db.env, [
+        { name: "PGPASSWORD", source: "env-file", value: "••••", sensitive: true, envFile: "config/db.env" },
+        { name: "PGUSER", source: "manifest", value: "app" },
+      ]);
+      rmSync(join(p.dir, "config", "db.env"));
+      const sin = p.cases(["--plan"]);
+      assert.equal(sin.code, 1);
+      assert.match(sin.out, /fromEnvFile\("config\/db\.env"\): no existe/);
+    } finally {
+      p.cleanup();
+    }
+  });
+
   it("compose.yaml es válido para docker compose", { skip: !hasCommand("docker", ["compose", "version"]) && "docker compose no está instalado" }, () => {
     const p = project({ "UC-01.case.ts": EXAMPLE });
     try {
@@ -244,13 +317,92 @@ describe("run.ts --plan", () => {
       const cfg = JSON.parse(ok.stdout);
       assert.deepEqual(Object.keys(cfg.services).sort(), ["pedidos-svc", "postgres", "proxy-api", "proxy-pedidos-svc"]);
       assert.equal(cfg.services.postgres.environment.POSTGRES_PASSWORD, "pg-pass");
-      assert.equal(cfg.services["proxy-api"].ports[0].published, "18080");
+      // 18080 o el siguiente libre: otra prueba puede tener ocupado ese puerto
+      const apiProxy = p.report().services.find((s: any) => s.name === "api").proxy.listen;
+      assert.equal(cfg.services["proxy-api"].ports[0].published, new URL(apiProxy).port);
       assert.ok(cfg.services["pedidos-svc"].build.context.endsWith("/services/pedidos"));
       assert.deepEqual(Object.keys(cfg.services["pedidos-svc"].depends_on), ["postgres"]);
 
       const missing = spawnSync("docker", ["compose", "-f", file, "config"], { encoding: "utf8", env: { ...process.env, PG_PASSWORD: undefined } });
       assert.notEqual(missing.status, 0);
       assert.match(missing.stderr, /Falta la variable PG_PASSWORD/);
+    } finally {
+      p.cleanup();
+    }
+  });
+});
+
+describe("cases.ts: levanta y apaga los servicios", () => {
+  /** Motor de compose falso: anota cada llamada en un archivo. */
+  function fakeEngine(dir: string) {
+    const log = join(dir, "compose.log");
+    const bin = join(dir, "fake-podman");
+    writeFileSync(bin, `#!/bin/sh\necho "$*" >> "${log}"\n`, { mode: 0o755 });
+    return { bin, calls: () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : []) };
+  }
+  const services = `await defineService({ name: "db", image: "postgres:16", ports: [{ container: 5432 }] });
+await defineService({ name: "svc", build: "./svc", ports: [{ container: 8080 }], http: true, dependsOn: ["db"] });`;
+
+  it("sin opciones planea, levanta con compose, corre los casos y reinicia los proxies para que escriban el HAR", () => {
+    const p = project({ "UC-01.case.ts": withServices(services) });
+    const engine = fakeEngine(p.dir);
+    try {
+      const r = runScript(CASES, ["--workspace", p.ws, "--skip-install"], { cwd: p.dir, env: { TESTCASE_COMPOSE: engine.bin } });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /UC-01 Caso simple/);
+      assert.match(r.out, /Los servicios siguen levantados/);
+      assert.doesNotMatch(r.out, /# A mano/);
+      const compose = join(p.tc, "compose.yaml");
+      assert.deepEqual(engine.calls(), [
+        `compose -f ${compose} up -d --build`,
+        `compose -f ${compose} stop proxy-svc`,
+        `compose -f ${compose} start proxy-svc`,
+      ]);
+      assert.equal(p.report().services.find((s: any) => s.name === "svc").proxy.engine, "podman");
+    } finally {
+      p.cleanup();
+    }
+  });
+
+  it("--only-up-services solo levanta y --down-services detiene primero los proxies", () => {
+    const p = project({ "UC-01.case.ts": withServices(services) });
+    const engine = fakeEngine(p.dir);
+    const env = { TESTCASE_COMPOSE: engine.bin };
+    try {
+      const up = p.cases(["--only-up-services"], env);
+      assert.equal(up.code, 0, up.out);
+      assert.match(up.out, /Servicios levantados/);
+      assert.doesNotMatch(up.out, /UC-01 Caso simple/, "no corre los casos");
+      assert.equal(p.report().run.number, 1, "no abre una corrida");
+      const down = p.cases(["--down-services"], env);
+      assert.equal(down.code, 0, down.out);
+      const compose = join(p.tc, "compose.yaml");
+      assert.deepEqual(engine.calls(), [`compose -f ${compose} up -d --build`, `compose -f ${compose} stop proxy-svc`, `compose -f ${compose} down`]);
+    } finally {
+      p.cleanup();
+    }
+  });
+
+  it("--down-services sin nada levantado no falla", () => {
+    const p = project({ "UC-01.case.ts": simple() });
+    try {
+      const r = p.cases(["--down-services"]);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /No hay servicios levantados/);
+    } finally {
+      p.cleanup();
+    }
+  });
+
+  it("si compose falla no corre los casos", () => {
+    const p = project({ "UC-01.case.ts": withServices(services) });
+    try {
+      const skip = p.cases([], { TESTCASE_COMPOSE: "false" });
+      assert.equal(skip.code, 0, "con --skip-services no toca compose");
+      const bad = runScript(CASES, ["--workspace", p.ws, "--skip-install"], { cwd: p.dir, env: { TESTCASE_COMPOSE: "false" } });
+      assert.notEqual(bad.code, 0);
+      assert.match(bad.out, /No pude levantar los servicios/);
+      assert.doesNotMatch(bad.out, /UC-01 Caso simple/);
     } finally {
       p.cleanup();
     }

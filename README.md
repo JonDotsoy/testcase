@@ -30,15 +30,23 @@ bunx skills add ./testcase
 ```text
 persona: describe los casos
   └─▶ agente: escribe .testcase/cases/UC-NN.case.ts (defineService + defineCase, Playwright)
-  └─▶ cases.ts --plan: servicios al reporte, compose.yaml y local.json
-        └─▶ el agente levanta contenedores (podman compose) y procesos locales (local.ts), cada uno con su proxy
-              └─▶ cases.ts: corre los casos a través del proxy ──▶ HAR + aserciones
+  └─▶ cases.ts: servicios al reporte (compose.yaml, local.json)
+        └─▶ levanta contenedores (podman compose) y procesos locales (local.ts), cada uno con su proxy
+              └─▶ corre todos los casos a través del proxy ──▶ HAR + aserciones (los servicios quedan arriba)
                     └─▶ import-har.ts ──▶ sync-report.ts ──▶ render-report.ts ──▶ .testcase/report.html
 ```
 
 - **`.testcase/report.json`** es la única fuente de verdad del reporte. Lo mantiene el agente y sigue el schema de [`report-schema.md`](testcase/references/report-schema.md).
 - **Los casos se ejecutan en un espacio de trabajo temporal**, fuera del repositorio, con su propio `package.json` y Playwright. No se instala nada en el proyecto que se prueba.
 - **Cada servicio HTTP tiene un proxy de evidencia** que guarda cada request y response en un HAR. Puede ser un contenedor (mitmdump con Podman) o un proceso local sin contenedor (`proxy.ts`).
+
+```sh
+bun <skill>/scripts/cases.ts                     # levanta los servicios y corre todos los casos de .testcase/cases/
+bun <skill>/scripts/cases.ts --only-up-services  # solo levanta los servicios
+bun <skill>/scripts/cases.ts --down-services     # apaga los servicios
+```
+
+Los servicios quedan levantados entre corridas; si ya están arriba con la misma definición, se reutilizan.
 
 ## Un caso de uso
 
@@ -98,7 +106,7 @@ Un servicio GraphQL (`defineService({ …, graphql: true })`) tiene `api.graphql
 | `testcase/references/report-schema.md` | Schema del reporte JSON, con el JSON Schema 2020-12. |
 | `testcase/assets/workspace/` | Librería de los casos (`testcase.ts`), el runner (`run.ts`) y un caso de ejemplo. |
 | `testcase/assets/` | Plantilla HTML, JSON inicial y el reporte de ejemplo. |
-| `testcase/scripts/cases.ts` | Ejecuta los `*.case.ts` en el espacio temporal (`--plan` genera los servicios, `compose.yaml` y `local.json`). |
+| `testcase/scripts/cases.ts` | Levanta los servicios y ejecuta los `*.case.ts` en el espacio temporal. `--only-up-services` solo levanta, `--down-services` apaga, `--plan` solo genera `compose.yaml` y `local.json`. |
 | `testcase/scripts/local.ts` | Levanta, revisa y detiene los procesos locales y los proxies sin contenedor (`up`, `status`, `down`). |
 | `testcase/scripts/proxy.ts` | Proxy de evidencia local que escribe el HAR como mitmdump. |
 | `testcase/scripts/import-har.ts` | Importa la evidencia del proxy y la une con las aserciones. |

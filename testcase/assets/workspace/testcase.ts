@@ -27,6 +27,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { readFileSync } from "node:fs";
+import { relative as relativePath, resolve as resolvePath } from "node:path";
 import type { APIRequestContext, APIResponse, Browser, BrowserContext, Page } from "playwright";
 
 export type Paso = "given" | "when" | "then";
@@ -183,6 +185,8 @@ export type Text = string | Promise<string> | (() => string | Promise<string>);
 export interface CaseStep {
   paso: Paso;
   description: string;
+  /** Declarado con `given.skip()`, `when.skip()` o `then.skip()`: queda en el caso pero no se ejecuta. */
+  skipped?: true;
 }
 
 /** Caso declarado con `defineCase(async () => { … })`. `run.ts` completa el id con el nombre del archivo si falta. */
@@ -344,27 +348,29 @@ export async function id(value: Text): Promise<void> {
   if (d) d.id = await text(value, "id");
 }
 
-function runStep<T>(paso: Paso, description: Text, fn?: StepFn<T>): Promise<T> {
-  if (fn !== undefined && typeof fn !== "function") throw new Error(`${paso}(): el segundo argumento debe ser una función.`);
+function runStep<T>(paso: Paso, description: Text, fn?: StepFn<T>, skip = false): Promise<T> {
+  const name = skip ? `${paso}.skip` : paso;
+  if (fn !== undefined && typeof fn !== "function") throw new Error(`${name}(): el segundo argumento debe ser una función.`);
   // El texto puede ser una promesa: para los errores inmediatos se usa el texto si ya es un string
   const quick = typeof description === "string" ? description.trim() : "…";
   const r0 = running.getStore();
   // Se revisa antes de devolver la promesa: un paso sin await deja el anterior en curso
-  if (r0?.step && !inStep.getStore()) throw new Error(`Falta await antes de ${r0.step}: ${paso}("${quick}") empezó con el paso anterior todavía corriendo.`);
-  const { d, r } = draftOrRun(paso);
+  if (r0?.step && !inStep.getStore()) throw new Error(`Falta await antes de ${r0.step}: ${name}("${quick}") empezó con el paso anterior todavía corriendo.`);
+  const { d, r } = draftOrRun(name);
   if (d) {
     // El lugar del paso se reserva ya, para conservar el orden aunque el texto sea una promesa
-    const step: CaseStep = { paso, description: quick };
+    const step: CaseStep = { paso, description: quick, ...(skip ? { skipped: true as const } : {}) };
     d.steps.push(step);
-    const p = text(description, paso).then((desc) => ((step.description = desc), placeholder as T));
+    const p = text(description, name).then((desc) => ((step.description = desc), (skip ? null : placeholder) as T));
     d.pending.push(p);
     p.catch(() => {}); // defineCase lo informa
     return p;
   }
-  r!.step = `${paso}("${quick}")`; // marca el paso en curso ya, antes de resolver el texto
+  r!.step = `${name}("${quick}")`; // marca el paso en curso ya, antes de resolver el texto
   const p = (async () => {
     try {
-      const desc = await text(description, paso);
+      const desc = await text(description, name);
+      if (skip) return null as T; // saltado: no corre su función ni hace requests
       const label = `${paso}("${desc}")`;
       r!.step = label;
       const t = r!.t;
@@ -393,16 +399,84 @@ export function then<T = void>(description: Text, fn?: StepFn<T>): Promise<T> {
   return runStep("then", description, fn);
 }
 
+/**
+ * Paso saltado: `given.skip()`, `when.skip()` y `then.skip()` reciben lo mismo que el paso, pero no lo ejecutan.
+ * El paso sigue en el caso (su texto queda en given/when/then del reporte) y el caso queda pendiente
+ * con los pasos saltados, salvo que otro paso falle. Devuelve siempre `null`, también al registrar los pasos:
+ * si otro paso usa su valor, sáltalo también.
+ *
+ *   await then.skip("el correo de confirmación llega", async () => …); // todavía no hay buzón de prueba
+ */
+given.skip = <T = void>(description: Text, fn?: StepFn<T>): Promise<null> => runStep("given", description, fn, true) as Promise<null>;
+when.skip = <T = void>(description: Text, fn?: StepFn<T>): Promise<null> => runStep("when", description, fn, true) as Promise<null>;
+then.skip = <T = void>(description: Text, fn?: StepFn<T>): Promise<null> => runStep("then", description, fn, true) as Promise<null>;
+
 /* ---------- servicios: defineService ---------- */
 
 /** Variable de entorno con un secreto. En el reporte queda enmascarada. */
 export interface FromEnv {
   fromEnv: string;
+  /** Archivo .env del que sale el valor (fromEnvFile), relativo a la raíz del proyecto. */
+  envFile?: string;
 }
 /** Lee el valor de una variable de entorno del host al levantar el servicio. Se marca como sensible. */
 export function fromEnv(name: string): FromEnv {
   sensitive(process.env[name]);
   return { fromEnv: name };
+}
+
+/** Lee un archivo .env: `CLAVE=valor`, comentarios con #, `export` opcional, comillas simples o dobles (con \\n en las dobles). */
+export function parseEnvFile(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=\s*(.*)$/.exec(line);
+    if (!m) continue;
+    let v = m[2];
+    if (v.startsWith('"')) {
+      const end = v.indexOf('"', 1);
+      v = (end > 0 ? v.slice(1, end) : v.slice(1)).replace(/\\n/g, "\n").replace(/\\"/g, '"');
+    } else if (v.startsWith("'")) {
+      const end = v.indexOf("'", 1);
+      v = end > 0 ? v.slice(1, end) : v.slice(1);
+    } else {
+      v = v.replace(/\s+#.*$/, "").trim();
+    }
+    out[m[1]] = v;
+  }
+  return out;
+}
+
+/**
+ * Carga las variables de un archivo `.env` del proyecto para el `env` de un servicio. La ruta es relativa a la raíz
+ * del proyecto. Todas quedan como sensibles: en el reporte se ven enmascaradas y su valor no se escribe en compose.yaml
+ * ni en local.json; se lee del archivo al levantar el servicio.
+ *
+ *   env: { ...fromEnvFile(".env.test"), LOG_LEVEL: "debug" }
+ *   env: fromEnvFile("config/db.env", { only: ["PGUSER", "PGPASSWORD"] })
+ */
+export function fromEnvFile(path: string, opts: { only?: string[] } = {}): Record<string, FromEnv> {
+  if (typeof path !== "string" || !path.trim()) throw new Error("fromEnvFile() necesita la ruta del archivo .env.");
+  const root = process.env.TESTCASE_PROJECT_ROOT ?? process.cwd();
+  const file = resolvePath(root, path);
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    throw new Error(`fromEnvFile("${path}"): no existe ${file}. La ruta es relativa a la raíz del proyecto.`);
+  }
+  const vars = parseEnvFile(text);
+  const keys = opts.only ?? Object.keys(vars);
+  const missing = keys.filter((k) => !(k in vars));
+  if (missing.length) throw new Error(`fromEnvFile("${path}"): el archivo no define ${missing.join(", ")}.`);
+  const rel = relativePath(root, file) || path;
+  return Object.fromEntries(
+    keys.map((k) => {
+      sensitive(vars[k] || undefined);
+      return [k, { fromEnv: k, envFile: rel }];
+    }),
+  );
 }
 
 export interface ArtifactDefinition {

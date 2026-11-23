@@ -117,6 +117,33 @@ describe("sync-report", () => {
     assert.equal(s.run.exitCode, 0);
   });
 
+  it("un caso con pasos saltados queda pending con los pasos en el mensaje, salvo que falle", async () => {
+    const skippedSteps = [
+      { paso: "then", description: "llega el correo" },
+      { paso: "then", description: "el pedido sigue pending" },
+    ];
+    const ok = baseReport();
+    ok.useCases[0].skippedSteps = skippedSteps;
+    ok.requests = [request(1, { assertions: [{ expression: "ok", passed: true }] })];
+    const s = runSync(ok);
+    assert.equal(s.useCases[0].status, "pending");
+    assert.deepEqual(s.useCases[0].pending, { reason: "skipped", message: "Se saltaron 2 pasos: then «llega el correo», then «el pedido sigue pending»." });
+    assert.deepEqual(s.useCases[0].requestIds, [1], "los requests que sí corrieron siguen en el caso");
+    assert.equal(s.summary.useCases.pending, 1);
+    assert.deepEqual(await validateReport(s), []);
+
+    const sinRequests = baseReport();
+    sinRequests.useCases[0].skippedSteps = [skippedSteps[0]];
+    assert.equal(runSync(sinRequests).useCases[0].pending.message, "Se saltó un paso: then «llega el correo».");
+
+    const falla = baseReport();
+    falla.useCases[0].skippedSteps = skippedSteps;
+    falla.requests = [request(1, { assertions: [{ expression: "status 403", passed: false, expected: 403, actual: 200 }] })];
+    const f = runSync(falla);
+    assert.equal(f.useCases[0].status, "failed", "un fallo pesa más que los pasos saltados");
+    assert.equal(f.useCases[0].pending, undefined);
+  });
+
   it("es idempotente y --check detecta un reporte desincronizado", () => {
     const { dir, cleanup } = tempDir();
     try {

@@ -98,6 +98,7 @@ report
 | `requestIds` | integer[] | sí | Requests del caso, en orden. |
 | `invocations` | Invocation[] | sí | Inventario de lo que se invocó: `{ protocol, method, target, count }`. Se agrupan solo las llamadas con el mismo protocolo, método y `target` exacto. |
 | `failure` | object | si `failed` | `explanation` (texto sin IA), `requestIds` y `assertionIds` que causaron el fallo. |
+| `skippedSteps` | `{ paso, description }[]` | no | Pasos declarados con `given.skip()`, `when.skip()` o `then.skip()`: están en el caso pero no se ejecutaron. Con pasos saltados, el caso queda `pending` (motivo `skipped`) salvo que falle. |
 | `pending` | object | si `pending` | `reason` (`handler-not-implemented` \| `skipped`) y `message`. |
 
 ## Request
@@ -205,7 +206,7 @@ Campos de `provisioned`:
 | `image` | string | sí | Imagen de Podman con su tag. Si se construyó, el nombre que quedó (por ejemplo `localhost/testcase-pedidos-svc:latest`). |
 | `build` | `{ context, dockerfile? }` | no | La imagen se construyó desde un Dockerfile del proyecto. |
 | `ports` | `{ host, container, protocol? }[]` | no | Puertos publicados. |
-| `env` | `{ name, source, value?, sensitive?, secretRef?, fromEnv? }[]` | no | Origen de cada variable: `manifest`, `env-file`, `inferred` (credenciales inferidas para imágenes conocidas) o `service-ref`. |
+| `env` | `{ name, source, value?, sensitive?, secretRef?, fromEnv?, envFile? }[]` | no | Origen de cada variable: `manifest`, `env-file` (con `envFile`, la ruta del archivo `.env` que declaró `fromEnvFile`), `inferred` (credenciales inferidas para imágenes conocidas) o `service-ref`. |
 | `dependsOn` | string[] | no | Servicios que deben estar listos antes. |
 | `storage` | `tmpfs` \| `volume` \| `none` | no | Almacenamiento del contenedor. |
 | `readyMs` | number | no | Tiempo hasta quedar listo, con los artefactos aplicados. |
@@ -1273,6 +1274,19 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
           "type": "string",
           "description": "Descripción del caso (describe() en el script)."
         },
+        "skippedSteps": {
+          "description": "Pasos declarados con given.skip(), when.skip() o then.skip(): están en el caso pero no se ejecutaron.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["paso", "description"],
+            "additionalProperties": false,
+            "properties": {
+              "paso": { "enum": ["given", "when", "then"] },
+              "description": { "type": "string" }
+            }
+          }
+        },
         "status": {
           "enum": [
             "passed",
@@ -1788,6 +1802,10 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
                   "fromEnv": {
                     "type": "string",
                     "description": "Variable del entorno de la que sale el valor (fromEnv en defineService)."
+                  },
+                  "envFile": {
+                    "type": "string",
+                    "description": "Archivo .env del que sale el valor (fromEnvFile en defineService), relativo a la raíz del proyecto."
                   }
                 }
               }
@@ -1920,6 +1938,10 @@ Ejemplo recortado: 3 de 9 casos de uso, 5 de 24 requests (HTTP, SQL, WebSocket, 
                   "fromEnv": {
                     "type": "string",
                     "description": "Variable del entorno de la que sale el valor (fromEnv en defineService)."
+                  },
+                  "envFile": {
+                    "type": "string",
+                    "description": "Archivo .env del que sale el valor (fromEnvFile en defineService), relativo a la raíz del proyecto."
                   }
                 }
               }
