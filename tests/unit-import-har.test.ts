@@ -69,7 +69,8 @@ describe("import-har", () => {
           url: "http://localhost:18080/graphql",
           started: at(400),
           headers: { "x-testcase-uc": "UC-01", "x-testcase-step": "UC-01.s3" },
-          body: JSON.stringify({ query: "mutation CancelOrder { cancel(id: 1) { ok } }" }),
+          // Con comentario y dos operaciones: operationName elige cuál se ejecuta
+          body: JSON.stringify({ query: "# ver y cancelar\nquery Ver { order { id } }\nmutation CancelOrder { cancel(id: 1) { ok } }", operationName: "CancelOrder" }),
           resBody: JSON.stringify({ errors: [{ message: "no" }] }),
         }),
         // 7: texto plano con un valor sensible
