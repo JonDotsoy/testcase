@@ -17,7 +17,7 @@ const out = join(root, "docs");
 const tmp = mkdtempSync(join(tmpdir(), "testcase-shots-"));
 const html = join(tmp, "report.html");
 
-execFileSync(process.execPath, [join(root, "testcase/scripts/render-report.ts"), join(root, "testcase/assets/report.example.json"), "-o", html], { stdio: "inherit" });
+execFileSync(process.execPath, [join(root, "packages/testcase/src/scripts/render-report.ts"), join(root, "testcase/assets/report.example.json"), "-o", html], { stdio: "inherit" });
 
 const browser = await chromium.launch();
 try {

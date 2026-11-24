@@ -225,11 +225,35 @@ interface Running {
   step?: string;
 }
 
-/** Registro: defineCase recorre su función sin ejecutar los pasos, para saber el título y los pasos antes de correr. */
-const collecting = new AsyncLocalStorage<Draft>();
-const running = new AsyncLocalStorage<Running>();
-/** Paso cuya función está corriendo en este contexto async (para detectar pasos anidados). */
-const inStep = new AsyncLocalStorage<string>();
+/**
+ * Estado global de la librería. Vive en `globalThis[Symbol.for("@jondotsoy/testcase")]` para que, si el caso y el runner
+ * cargan dos copias del paquete (por ejemplo, una instalada en el proyecto y otra en la CLI), compartan el mismo registro.
+ */
+interface State {
+  /** Registro: defineCase recorre su función sin ejecutar los pasos, para saber el título y los pasos antes de correr. */
+  collecting: AsyncLocalStorage<Draft>;
+  running: AsyncLocalStorage<Running>;
+  /** Paso cuya función está corriendo en este contexto async (para detectar pasos anidados). */
+  inStep: AsyncLocalStorage<string>;
+  /** Contexto del paso que está corriendo (para check, ensure, page, notation y vars sin `t`). */
+  active: AsyncLocalStorage<CaseContext>;
+  definedCases: CaseDefinition[];
+  pendingCases: Promise<unknown>[];
+  declared: Map<string, ServiceDefinition>;
+  sensitiveSet: Set<string>;
+}
+const STATE_KEY = Symbol.for("@jondotsoy/testcase");
+const state: State = ((globalThis as any)[STATE_KEY] ??= {
+  collecting: new AsyncLocalStorage<Draft>(),
+  running: new AsyncLocalStorage<Running>(),
+  inStep: new AsyncLocalStorage<string>(),
+  active: new AsyncLocalStorage<CaseContext>(),
+  definedCases: [],
+  pendingCases: [],
+  declared: new Map(),
+  sensitiveSet: new Set(),
+} satisfies State);
+const { collecting, running, inStep, active, definedCases, pendingCases, declared, sensitiveSet } = state;
 
 /**
  * Valor que devuelve `await given(…)` mientras se registran los pasos: acepta cualquier propiedad o llamada
@@ -247,9 +271,6 @@ const text = async (v: Text, fn: string): Promise<string> => {
   if (typeof s !== "string" || !s.trim()) throw new Error(`${fn}() necesita un texto no vacío.`);
   return s.trim();
 };
-
-const definedCases: CaseDefinition[] = [];
-const pendingCases: Promise<unknown>[] = [];
 
 /**
  * Casos definidos desde la última llamada, en orden. Lo usa run.ts después de importar cada archivo.
@@ -594,8 +615,6 @@ export interface Service {
   readonly graphql: GraphQL;
 }
 
-const declared = new Map<string, ServiceDefinition>();
-
 /** Servicios declarados con defineService en los scripts cargados. Lo usa run.ts. */
 export function declaredServices(): ServiceDefinition[] {
   return [...declared.values()];
@@ -698,8 +717,6 @@ function normalizeDef(def: ServiceDefinition): unknown {
 
 /* ---------- valores sensibles ---------- */
 
-const sensitiveSet = new Set<string>();
-
 /**
  * Declara un valor o texto sensible y lo devuelve tal cual, para usarlo en la misma línea:
  *
@@ -731,8 +748,6 @@ export function maskSensitive(text: string): string {
 }
 
 /* ---------- utilidades para usar dentro de los pasos sin `t` ---------- */
-
-const active = new AsyncLocalStorage<CaseContext>();
 
 function context(what: string): CaseContext {
   const t = active.getStore();
@@ -1000,7 +1015,13 @@ export interface ServiceTarget {
   viaProxy: boolean;
 }
 
-export class CaseAbort extends Error {}
+export class CaseAbort extends Error {
+  override name = "CaseAbort";
+  /** Reconoce un CaseAbort aunque venga de otra copia del paquete. */
+  static override [Symbol.hasInstance](value: unknown): boolean {
+    return value instanceof Error && value.name === "CaseAbort";
+  }
+}
 
 /** Codifica un JSON para un header HTTP (los headers no admiten tildes ni ñ). */
 export function encodeHeaderJson(value: unknown): string {

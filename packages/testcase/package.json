@@ -1,0 +1,32 @@
+{
+  "name": "@jondotsoy/testcase",
+  "version": "0.0.0",
+  "description": "Casos de uso como scripts TypeScript con evidencia HTTP y un reporte HTML.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Jonathan Delgado",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JonDotsoy/testcase.git",
+    "directory": "packages/testcase"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./runner": "./src/runner.ts",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "pack:dist": "node scripts/build.ts && npm pack ./dist",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "peerDependencies": {
+    "playwright": "^1.63.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

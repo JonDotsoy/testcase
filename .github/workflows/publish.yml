@@ -1,0 +1,83 @@
+name: Publicar
+
+# Deja @jondotsoy/testcase en staging en npm al crear un tag vX.Y.Z (igual a la versión de packages/testcase/package.json).
+# Usa `npm stage publish`: la versión queda en el registro sin estar disponible hasta que un mantenedor la apruebe
+# con 2FA (`npm stage approve <stage-id>`). Así ninguna versión sale sin que una persona la confirme.
+# Autenticación por OIDC (trusted publishing): no usa NPM_TOKEN. En npmjs.com, el paquete debe tener como
+# trusted publisher este repositorio y este workflow (publish.yml), con permiso de stage publish.
+#
+# A mano (Actions → Publicar → Run workflow) corre todo pero con `npm stage publish --dry-run`, salvo que se elija publicar.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Dejar en staging de verdad (sin esto, npm stage publish --dry-run)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write # OIDC: npm canjea este token por uno de publicación de corta duración
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+          registry-url: "https://registry.npmjs.org"
+
+      # npm stage necesita npm 11.20 o superior
+      - run: npm install -g npm@^11.20.0
+      - run: npm --version
+
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: El tag coincide con la versión del paquete
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(node -p 'require("./packages/testcase/package.json").version')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::El tag $GITHUB_REF_NAME no coincide con la versión $version de packages/testcase/package.json"
+            exit 1
+          fi
+
+      # Las mismas pruebas que CI, incluida la que instala el .tgz en un proyecto aparte
+      - run: npx playwright install --with-deps chromium
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Build y npm pack ./dist
+        id: pack
+        run: |
+          npm run build
+          mkdir -p out
+          tgz=$(npm pack ./packages/testcase/dist --pack-destination out | tail -1)
+          echo "tgz=out/$tgz" >> "$GITHUB_OUTPUT"
+
+      # Se deja en staging el mismo .tgz que se probó y empaquetó
+      - name: npm stage publish
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ] || [ "${{ inputs.publish }}" = "true" ]; then
+            npm stage publish "${{ steps.pack.outputs.tgz }}" --access public
+            echo "Versión en staging. Para publicarla: npm stage list @jondotsoy/testcase y luego npm stage approve <stage-id>" >> "$GITHUB_STEP_SUMMARY"
+          else
+            npm stage publish "${{ steps.pack.outputs.tgz }}" --access public --dry-run
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paquete
+          path: out/*.tgz

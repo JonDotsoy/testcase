@@ -1,15 +1,18 @@
 {
-  "name": "testcase-skill",
+  "name": "testcase-monorepo",
   "private": true,
   "type": "module",
-  "description": "Pruebas de la skill testcase. La skill en sí (testcase/) no tiene dependencias.",
+  "description": "Raíz del workspace: el paquete @jondotsoy/testcase (packages/testcase) y la skill testcase (testcase/).",
   "license": "MIT",
   "scripts": {
     "test": "node --test --test-concurrency=1 \"tests/*.test.ts\"",
     "test:unit": "node --test --test-concurrency=1 \"tests/unit-*.test.ts\"",
     "test:e2e": "node --test \"tests/e2e.test.ts\"",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "docs:screenshots": "node docs/screenshots.ts"
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p packages/testcase/tsconfig.json",
+    "docs:screenshots": "node docs/screenshots.ts",
+    "build": "npm run build -w @jondotsoy/testcase",
+    "pack:dist": "npm run pack:dist -w @jondotsoy/testcase",
+    "sync:skill": "node scripts/sync-skill.ts"
   },
   "engines": {
     "node": ">=22.18"
@@ -19,6 +22,9 @@
     "ajv": "8.17.1",
     "ajv-formats": "3.0.1",
     "playwright": "1.63.0",
-    "typescript": "5.6.3"
-  }
+    "typescript": "5.9.3"
+  },
+  "workspaces": [
+    "packages/*"
+  ]
 }

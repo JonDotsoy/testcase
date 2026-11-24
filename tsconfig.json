@@ -8,7 +8,17 @@
     "strict": true,
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["tests/**/*.ts", "docs/*.ts", "testcase/scripts/*.ts", "testcase/assets/workspace/*.ts", "testcase/assets/workspace/examples/*.ts"]
+  "include": [
+    "tests/**/*.ts",
+    "docs/*.ts",
+    "scripts/*.ts",
+    "packages/testcase/scripts/*.ts",
+    "testcase/scripts/*.ts",
+    "testcase/assets/workspace/*.ts",
+    "testcase/assets/workspace/examples/*.ts"
+  ]
 }

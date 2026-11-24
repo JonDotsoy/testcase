@@ -5,7 +5,8 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { ASSETS, readJson, ROOT, SCRIPTS, SKILL, WORKSPACE } from "./helpers.ts";
+import { ASSETS, readJson, ROOT, SKILL, SKILL_SCRIPTS as SCRIPTS, WORKSPACE } from "./helpers.ts";
+import { SKILL_COPIES } from "../scripts/sync-skill.ts";
 
 const skillMd = readFileSync(join(SKILL, "SKILL.md"), "utf8");
 
@@ -48,6 +49,16 @@ describe("scripts", () => {
       for (const i of imports) assert.ok(i.startsWith("node:"), `${f} importa ${i}: los scripts solo usan módulos de Node`);
     });
   }
+});
+
+describe("copias del paquete", () => {
+  it("la skill lleva una copia exacta del código de packages/testcase/src (npm run sync:skill)", () => {
+    assert.ok(SKILL_COPIES.length >= 8);
+    for (const [from, to] of SKILL_COPIES) {
+      assert.ok(existsSync(to), `falta ${to}`);
+      assert.ok(readFileSync(from).equals(readFileSync(to)), `${to} no coincide con ${from}: corre npm run sync:skill`);
+    }
+  });
 });
 
 describe("assets", () => {
