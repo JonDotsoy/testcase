@@ -334,6 +334,41 @@ describe("report.html en el navegador", { skip: chromiumError ?? false, timeout:
     }
   });
 
+  it("un caso running se muestra «En progreso» y cuenta en el resumen", async () => {
+    const { chromium } = await import("playwright");
+    const { tempDir, ASSETS } = await import("./helpers.ts");
+    const { dir, cleanup } = tempDir();
+    const browser = await chromium.launch();
+    try {
+      const report = readJson(join(ASSETS, "report.example.json"));
+      const uc = report.useCases[0];
+      uc.status = "running";
+      uc.running = { message: "Ejecutando then «el pedido queda cancelado»." };
+      delete uc.failure;
+      delete uc.pending;
+      report.summary.useCases.running = 1;
+      const json = join(dir, "running.json");
+      writeJson(json, report);
+      const r = await runAsync(join(SCRIPTS, "render-report.ts"), [json], { cwd: dir });
+      assert.equal(r.code, 0, r.out);
+      const page = await browser.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.fulfill({ status: 200, contentType: "text/css", body: "" }));
+      await page.goto("file://" + join(dir, "running.html"));
+      const card = page.locator(`.uc[data-uc="${uc.id}"]`);
+      assert.equal(await card.getAttribute("data-s"), "run");
+      const text = await card.innerText();
+      assert.match(text, /En progreso/);
+      assert.match(text, /Ejecutando then «el pedido queda cancelado»\./);
+      assert.match(await page.locator("#st-uc-lg").innerText(), /1 en progreso/);
+      assert.deepEqual(errors, []);
+    } finally {
+      await browser.close();
+      cleanup();
+    }
+  });
+
   it("Copiar en Estado copia la respuesta como mensaje HTTP, y Reproducir copia el request como fetch()", async () => {
     const { chromium } = await import("playwright");
     const { tempDir, ASSETS } = await import("./helpers.ts");

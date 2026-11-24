@@ -79,7 +79,7 @@ report
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| `useCases` | `{ total, passed, failed, pending }` | Conteo por estado. |
+| `useCases` | `{ total, passed, failed, pending, running? }` | Conteo por estado. `running` cuenta los casos en progreso y se omite si es 0. |
 | `requests` | `{ total, byProtocol }` | `byProtocol` usa las claves `http`, `grpc`, `graphql`, `ws` y `sql`. |
 | `assertions` | `{ total, passed, failed }` | Suma de las aserciones de todos los requests. |
 | `phases` | `{ provisioningMs, buildMs, testsMs, teardownMs }` | Tiempo de cada fase de la corrida. |
@@ -91,7 +91,7 @@ report
 | `id` | string `UC-NN` | sí | Id estable del caso de uso. |
 | `title` | string | sí | Título que aparece en el manifiesto. |
 | `description` | string | no | Descripción más larga que el título: contexto, regla de negocio o por qué importa. La declara `describe()` en el caso. |
-| `status` | `passed` \| `failed` \| `pending` | sí | `pending` indica que el handler todavía no está implementado. |
+| `status` | `passed` \| `failed` \| `pending` \| `running` | sí | `pending` indica que el handler todavía no está implementado. `running` indica que el caso se estaba ejecutando cuando se escribió el reporte (un reporte que se actualiza durante la corrida): sus requests y aserciones son las que alcanzaron a terminar. |
 | `given` / `when` / `then` | string | sí | Texto del manifiesto, sin cambios. |
 | `handler` | `{ file, line? }` | sí | Archivo TypeScript del handler. |
 | `startOffsetMs` / `durationMs` | number | no | No existen si el caso no se ejecutó. |
@@ -100,6 +100,7 @@ report
 | `failure` | object | si `failed` | `explanation` (texto sin IA), `requestIds` y `assertionIds` que causaron el fallo. |
 | `skippedSteps` | `{ paso, description }[]` | no | Pasos declarados con `given.skip()`, `when.skip()` o `then.skip()`: están en el caso pero no se ejecutaron. Con pasos saltados, el caso queda `pending` (motivo `skipped`) salvo que falle. |
 | `pending` | object | si `pending` | `reason` (`handler-not-implemented` \| `skipped`) y `message`. |
+| `running` | `{ message? }` | no | Texto opcional para un caso `running`, por ejemplo el paso que se está ejecutando. |
 
 ## Request
 
