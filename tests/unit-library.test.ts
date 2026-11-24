@@ -1,5 +1,5 @@
 /**
- * Librería de casos (assets/workspace/testcase.ts): sintaxis defineCase, pasos, notation, sensitive,
+ * Librería de casos (packages/testcase/src/testcase.ts): sintaxis defineCase, pasos, notation, sensitive,
  * defineService y el contexto que recibe cada paso.
  */
 import assert from "node:assert/strict";
@@ -39,7 +39,7 @@ import {
   type RecordedCheck,
   type RecordedNotation,
   type ServiceTarget,
-} from "../testcase/assets/workspace/testcase.ts";
+} from "../packages/testcase/src/testcase.ts";
 
 const decode = (h: string) => JSON.parse(Buffer.from(h.slice(4), "base64url").toString("utf8"));
 

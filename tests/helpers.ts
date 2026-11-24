@@ -9,7 +9,13 @@ import { fileURLToPath } from "node:url";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const SKILL = join(ROOT, "testcase");
-export const SCRIPTS = join(SKILL, "scripts");
+/** Paquete @jondotsoy/testcase: el código vive en src/ y la skill lleva una copia (scripts/sync-skill.ts). */
+export const PKG = join(ROOT, "packages", "testcase");
+export const SRC = join(PKG, "src");
+/** Scripts del paquete (proxy, local, import-har, sync-report, render-report): las pruebas corren estos. */
+export const SCRIPTS = join(SRC, "scripts");
+/** Scripts de la skill: cases.ts y las copias de los del paquete. */
+export const SKILL_SCRIPTS = join(SKILL, "scripts");
 export const ASSETS = join(SKILL, "assets");
 export const WORKSPACE = join(ASSETS, "workspace");
 
@@ -120,7 +126,7 @@ export async function validateReport(report: unknown): Promise<string[]> {
   return validate(report) ? [] : validate.errors.map((e: any) => `${e.instancePath} ${e.message}`);
 }
 
-export const CASES = join(SCRIPTS, "cases.ts");
+export const CASES = join(SKILL_SCRIPTS, "cases.ts");
 const CASE_MODES = ["--plan", "--typecheck", "--only-up-services", "--down-services", "--skip-services"];
 
 /**

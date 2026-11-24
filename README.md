@@ -115,6 +115,24 @@ Un servicio GraphQL (`defineService({ …, graphql: true })`) tiene `api.graphql
 
 Los scripts no tienen dependencias y corren con `bun` o con Node 22.6 o superior.
 
+## Paquete npm `@jondotsoy/testcase` (en preparación)
+
+La librería y los scripts viven en [`packages/testcase/`](packages/testcase) y se publicarán como `@jondotsoy/testcase`. Todavía no está publicado: mientras tanto la skill lleva una copia exacta de ese código en `testcase/assets/workspace/` y `testcase/scripts/`.
+
+| Ruta | Para qué |
+|---|---|
+| `packages/testcase/src/index.ts` | Entrada `@jondotsoy/testcase`: la API de los casos (`defineCase`, `defineService`, `check`…). |
+| `packages/testcase/src/runner.ts` | Entrada `@jondotsoy/testcase/runner`: lo que usa el runner para cargar y correr casos. |
+| `packages/testcase/src/testcase.ts`, `run.ts`, `scripts/`, `assets/` | La librería, el runner y los scripts. Son la fuente: no edites las copias de la skill. |
+
+```sh
+npm run sync:skill    # copia packages/testcase/src a la skill (las pruebas fallan si no coinciden)
+npm run build         # escribe el paquete completo en packages/testcase/dist (JS, .d.ts, assets y su package.json)
+npm run pack:dist     # build + npm pack ./dist: el .tgz que se publicaría
+```
+
+El estado global de la librería (casos registrados, servicios declarados, valores sensibles) vive en `globalThis[Symbol.for("@jondotsoy/testcase")]`, así dos copias del paquete cargadas en el mismo proceso comparten el registro.
+
 ## Pruebas
 
 Las pruebas validan toda la skill: la librería de los casos, `run.ts --plan` y el `compose.yaml` que genera, `cases.ts`, `import-har.ts`, `sync-report.ts`, `render-report.ts`, el schema del reporte, los procesos locales y el proxy sin contenedor, y un flujo completo con Playwright, un servidor de prueba y el proxy local.
@@ -125,7 +143,7 @@ npx playwright install chromium      # para el flujo completo; sin Chromium esas
 npm test                             # todas
 npm run test:unit                    # sin navegador
 npm run test:e2e                     # flujo completo
-npm run typecheck
+npm run typecheck                    # repo y packages/testcase
 npm run docs:screenshots             # regenera las capturas de este README
 ```
 

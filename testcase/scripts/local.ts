@@ -31,7 +31,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, write
 import { createHash } from "node:crypto";
 import { request } from "node:http";
 import { connect } from "node:net";
-import { dirname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 
 type Json = any;
 
@@ -275,7 +275,7 @@ async function up() {
 
   for (const p of plan.proxies) {
     const log = join(reportDir, p.log);
-    const pid = start(process.execPath, [...tsRuntimeArgs(), join(here, "proxy.ts"), "--upstream", p.upstream, "--listen", String(p.port), "--har", join(reportDir, p.har), ...(p.insecure ? ["--insecure"] : []), ...(p.ca ? ["--ca", resolve(projectRoot, p.ca)] : [])], {
+    const pid = start(process.execPath, [...tsRuntimeArgs(), join(here, `proxy${extname(new URL(import.meta.url).pathname)}`), "--upstream", p.upstream, "--listen", String(p.port), "--har", join(reportDir, p.har), ...(p.insecure ? ["--insecure"] : []), ...(p.ca ? ["--ca", resolve(projectRoot, p.ca)] : [])], {
       cwd: reportDir,
       env: process.env,
       log,
