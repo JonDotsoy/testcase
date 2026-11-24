@@ -131,6 +131,8 @@ npm run build         # escribe el paquete completo en packages/testcase/dist (J
 npm run pack:dist     # build + npm pack ./dist: el .tgz que se publicaría
 ```
 
+**Publicación.** El workflow [`publish.yml`](.github/workflows/publish.yml) publica al crear un tag `vX.Y.Z` igual a la versión de `packages/testcase/package.json`: corre las pruebas, hace el build, `npm pack ./dist` y publica ese mismo `.tgz`. Se autentica con OIDC (trusted publishing de npm), sin `NPM_TOKEN`, y npm agrega la provenance. Corrido a mano desde Actions hace todo con `npm publish --dry-run`.
+
 El estado global de la librería (casos registrados, servicios declarados, valores sensibles) vive en `globalThis[Symbol.for("@jondotsoy/testcase")]`, así dos copias del paquete cargadas en el mismo proceso comparten el registro.
 
 ## Pruebas
