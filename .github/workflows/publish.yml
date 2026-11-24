@@ -1,10 +1,12 @@
 name: Publicar
 
-# Publica @jondotsoy/testcase en npm al crear un tag vX.Y.Z (igual a la versión de packages/testcase/package.json).
+# Deja @jondotsoy/testcase en staging en npm al crear un tag vX.Y.Z (igual a la versión de packages/testcase/package.json).
+# Usa `npm stage publish`: la versión queda en el registro sin estar disponible hasta que un mantenedor la apruebe
+# con 2FA (`npm stage approve <stage-id>`). Así ninguna versión sale sin que una persona la confirme.
 # Autenticación por OIDC (trusted publishing): no usa NPM_TOKEN. En npmjs.com, el paquete debe tener como
-# trusted publisher este repositorio y este workflow (publish.yml). npm agrega la provenance sola.
+# trusted publisher este repositorio y este workflow (publish.yml), con permiso de stage publish.
 #
-# A mano (Actions → Publicar → Run workflow) corre todo pero con `npm publish --dry-run`, salvo que se elija publicar.
+# A mano (Actions → Publicar → Run workflow) corre todo pero con `npm stage publish --dry-run`, salvo que se elija publicar.
 
 on:
   push:
@@ -12,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publicar de verdad (sin esto, npm publish --dry-run)"
+        description: "Dejar en staging de verdad (sin esto, npm stage publish --dry-run)"
         type: boolean
         default: false
 
@@ -36,8 +38,8 @@ jobs:
           node-version: "24.x"
           registry-url: "https://registry.npmjs.org"
 
-      # Trusted publishing necesita npm 11.5.1 o superior
-      - run: npm install -g npm@^11.5.1
+      # npm stage necesita npm 11.20 o superior
+      - run: npm install -g npm@^11.20.0
       - run: npm --version
 
       - uses: oven-sh/setup-bun@v2
@@ -65,13 +67,14 @@ jobs:
           tgz=$(npm pack ./packages/testcase/dist --pack-destination out | tail -1)
           echo "tgz=out/$tgz" >> "$GITHUB_OUTPUT"
 
-      # Se publica el mismo .tgz que se probó y empaquetó
-      - name: npm publish
+      # Se deja en staging el mismo .tgz que se probó y empaquetó
+      - name: npm stage publish
         run: |
           if [ "$GITHUB_REF_TYPE" = "tag" ] || [ "${{ inputs.publish }}" = "true" ]; then
-            npm publish "${{ steps.pack.outputs.tgz }}" --access public
+            npm stage publish "${{ steps.pack.outputs.tgz }}" --access public
+            echo "Versión en staging. Para publicarla: npm stage list @jondotsoy/testcase y luego npm stage approve <stage-id>" >> "$GITHUB_STEP_SUMMARY"
           else
-            npm publish "${{ steps.pack.outputs.tgz }}" --access public --dry-run
+            npm stage publish "${{ steps.pack.outputs.tgz }}" --access public --dry-run
           fi
 
       - uses: actions/upload-artifact@v4

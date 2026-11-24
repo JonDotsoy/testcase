@@ -131,7 +131,14 @@ npm run build         # escribe el paquete completo en packages/testcase/dist (J
 npm run pack:dist     # build + npm pack ./dist: el .tgz que se publicaría
 ```
 
-**Publicación.** El workflow [`publish.yml`](.github/workflows/publish.yml) publica al crear un tag `vX.Y.Z` igual a la versión de `packages/testcase/package.json`: corre las pruebas, hace el build, `npm pack ./dist` y publica ese mismo `.tgz`. Se autentica con OIDC (trusted publishing de npm), sin `NPM_TOKEN`, y npm agrega la provenance. Corrido a mano desde Actions hace todo con `npm publish --dry-run`.
+**Publicación.** El workflow [`publish.yml`](.github/workflows/publish.yml) corre al crear un tag `vX.Y.Z` igual a la versión de `packages/testcase/package.json`: corre las pruebas, hace el build, `npm pack ./dist` y deja ese mismo `.tgz` en staging con `npm stage publish`. Se autentica con OIDC (trusted publishing de npm), sin `NPM_TOKEN`. La versión sale al registro cuando un mantenedor la aprueba con 2FA:
+
+```sh
+npm stage list @jondotsoy/testcase
+npm stage approve <stage-id>      # pide el código 2FA
+```
+
+Corrido a mano desde Actions hace todo con `npm stage publish --dry-run`. `npm stage` necesita npm 11.20 o superior.
 
 El estado global de la librería (casos registrados, servicios declarados, valores sensibles) vive en `globalThis[Symbol.for("@jondotsoy/testcase")]`, así dos copias del paquete cargadas en el mismo proceso comparten el registro.
 
