@@ -334,6 +334,38 @@ describe("report.html en el navegador", { skip: chromiumError ?? false, timeout:
     }
   });
 
+  it("la cabecera tiene un selector de temas con Cobalto, Raycast, Nuxt, Perplexity y Vercel", async () => {
+    const { chromium } = await import("playwright");
+    const { tempDir, ASSETS } = await import("./helpers.ts");
+    const { dir, cleanup } = tempDir();
+    const browser = await chromium.launch();
+    try {
+      const json = join(dir, "tema.json");
+      writeFileSync(json, readFileSync(join(ASSETS, "report.example.json")));
+      const r = await runAsync(join(SCRIPTS, "render-report.ts"), [json], { cwd: dir });
+      assert.equal(r.code, 0, r.out);
+      const page = await browser.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.fulfill({ status: 200, contentType: "text/css", body: "" }));
+      await page.goto("file://" + join(dir, "tema.html"));
+      const select = page.locator("header #theme-select");
+      assert.deepEqual(await select.locator("option").allTextContents(), ["Cobalto", "Raycast", "Nuxt", "Perplexity", "Vercel"]);
+      assert.equal(await select.inputValue(), "cobalto");
+      assert.equal(await page.evaluate(() => document.documentElement.dataset.palette), "cobalto");
+      // Raycast: siempre oscuro, lienzo #040506; la elección se recuerda al recargar
+      await select.selectOption("raycast");
+      assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(4, 5, 6)");
+      await page.reload();
+      assert.equal(await page.locator("#theme-select").inputValue(), "raycast");
+      assert.equal(await page.evaluate(() => document.documentElement.dataset.palette), "raycast");
+      assert.deepEqual(errors, []);
+    } finally {
+      await browser.close();
+      cleanup();
+    }
+  });
+
   it("Copiar en Estado copia la respuesta como mensaje HTTP, y Reproducir copia el request como fetch()", async () => {
     const { chromium } = await import("playwright");
     const { tempDir, ASSETS } = await import("./helpers.ts");
