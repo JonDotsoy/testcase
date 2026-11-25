@@ -2,7 +2,7 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@600;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500&family=JetBrains+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@600;700;800&display=swap">
 <style>
 /* Temas: cada tema es un bloque de tokens bajo :root[data-palette="<id>"] (claro, y oscuro con data-theme / prefers-color-scheme). "cobalto" es el tema base de :root. */
 /* Layout: cabecera de corrida → resumen → casos de uso → línea de tiempo (waterfall) + panel de detalle fijo a la derecha en pantallas anchas */
@@ -28,6 +28,31 @@
   --http:#5b8dff; --grpc:#a780ff; --graphql:#f05aa6; --ws:#f0a03c; --sql:#2fc4b4; --infra:#5d6a80;
   --pass:#4ccb7a; --pass-soft:#14301f; --fail:#ff6b6b; --fail-soft:#3a1719; --pend:#e8a948; --pend-soft:#35270f;
   --code-bg:#11151c; --k:#b99bff; --s:#5fd39a; --n:#f2a65a; --b:#7fa6ff; color-scheme:dark}
+
+/* Tema «Raycast»: centro de mando nocturno, un solo acento coral. Siempre oscuro (ignora claro/oscuro del sistema).
+   Lienzo casi negro, bordes finos en vez de sombras, tarjetas con sombra de "tecla" y acciones neutras (sin color). */
+:root[data-palette="raycast"]{
+  --bg:#040506; --surface:#07080a; --surface-2:#111214; --ink:#ffffff; --muted:#9c9c9d; --faint:#6a6b6c; --line:#2f3031; --line-2:#1b1c1e;
+  --accent:#e6e6e6; --accent-soft:#1b1c1e; --brand:#ff6363; --brand-soft:#452324;
+  --http:#56c2ff; --grpc:#a99bff; --graphql:#f07ab8; --ws:#f0b45a; --sql:#59d499; --infra:#454647;
+  --pass:#59d499; --pass-soft:#12291e; --fail:#ff6363; --fail-soft:#452324; --pend:#f0b45a; --pend-soft:#33270f;
+  --code-bg:#111214; --k:#c3a6ff; --s:#59d499; --n:#f0b45a; --b:#56c2ff;
+  --f-display:"Inter",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --f-body:"Inter",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --f-mono:"Geist Mono","JetBrains Mono",Menlo,Monaco,monospace;
+  --key:rgba(255,255,255,.05) 0 1px 0 0 inset,rgba(255,255,255,.1) 0 0 0 1px,rgba(0,0,0,.2) 0 -1px 0 0 inset;
+  color-scheme:dark}
+:root[data-palette="raycast"] body{font-feature-settings:"calt","kern","liga","ss03"}
+:root[data-palette="raycast"] h1,:root[data-palette="raycast"] h2,:root[data-palette="raycast"] h3{letter-spacing:.004em}
+:root[data-palette="raycast"] .runhead h1{font-weight:400}
+:root[data-palette="raycast"] .runhead h1 span{font-weight:400}
+:root[data-palette="raycast"] .logo{background:var(--brand);color:#fff;border-radius:6px;transform:rotate(45deg) scale(.82)}
+:root[data-palette="raycast"] .logo>span{display:block;transform:rotate(-45deg) scale(1.2)}
+:root[data-palette="raycast"] :is(.stat,.svc,.uc,.panel){border-color:transparent;border-radius:16px;box-shadow:var(--key)}
+:root[data-palette="raycast"] .uc[aria-pressed="true"]{box-shadow:var(--key),0 0 0 1px var(--accent)}
+:root[data-palette="raycast"] .verdict{border-radius:8px}
+:root[data-palette="raycast"] .theme-pick select{background-color:var(--surface-2);border-color:#363739;border-radius:8px}
+:root[data-palette="raycast"] .eyebrow{letter-spacing:.073em}
 
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.5;
@@ -237,7 +262,7 @@ pre.code .k{color:var(--k)} pre.code .s{color:var(--s)} pre.code .n{color:var(--
 
   <header class="runhead">
     <div>
-      <div class="brand-row"><div class="brand"><span class="logo">t</span><b>testmania</b> <span id="h-version"></span> · reporte de corrida</div><label class="theme-pick">Tema <select id="theme-select" aria-label="Tema del reporte"></select></label></div>
+      <div class="brand-row"><div class="brand"><span class="logo"><span>t</span></span><b>testmania</b> <span id="h-version"></span> · reporte de corrida</div><label class="theme-pick">Tema <select id="theme-select" aria-label="Tema del reporte"></select></label></div>
       <h1><span id="h-suite" style="color:inherit;font-weight:inherit"></span> <span id="h-run"></span></h1>
       <div class="runmeta" id="h-meta"></div>
     </div>
@@ -742,7 +767,7 @@ export default handler("Cliente crea un pedido", async (ctx) => {
 
 /* ---------- temas ---------- */
 // Para sumar un tema: agrega { id, label } aquí y su bloque de tokens :root[data-palette="<id>"] en el CSS.
-const THEMES = [{ id:"cobalto", label:"Cobalto" }];
+const THEMES = [{ id:"cobalto", label:"Cobalto" }, { id:"raycast", label:"Raycast" }];
 const THEME_KEY = "testcase.report.tema";
 function setTheme(id){
   const t = THEMES.find(x=>x.id===id) || THEMES[0];
