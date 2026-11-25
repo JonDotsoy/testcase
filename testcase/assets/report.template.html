@@ -4,6 +4,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@600;700;800&display=swap">
 <style>
+/* Temas: cada tema es un bloque de tokens bajo :root[data-palette="<id>"] (claro, y oscuro con data-theme / prefers-color-scheme). "cobalto" es el tema base de :root. */
 /* Layout: cabecera de corrida → resumen → casos de uso → línea de tiempo (waterfall) + panel de detalle fijo a la derecha en pantallas anchas */
 :root{
   --bg:#f3f5f8; --surface:#ffffff; --surface-2:#f8f9fb; --ink:#121720; --muted:#5a6475; --faint:#8a93a3; --line:#dde2ea; --line-2:#eaedf2;
@@ -45,6 +46,9 @@ button{font:inherit;color:inherit}
 .brand{display:flex;align-items:center;gap:8px;font-family:var(--f-mono);font-size:12px;color:var(--muted)}
 .brand b{color:var(--ink);font-weight:600}
 .logo{width:18px;height:18px;border-radius:4px;background:var(--ink);display:grid;place-items:center;color:var(--bg);font-weight:700;font-size:11px}
+.brand-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}
+.theme-pick{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.theme-pick select{font:inherit;font-size:12px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:2px 22px 2px 8px;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 11px) 55%,calc(100% - 7px) 55%;background-size:4px 4px;background-repeat:no-repeat;cursor:pointer}
 .runhead h1{font-size:clamp(24px,3.4vw,34px);margin-top:6px;font-weight:800}
 .runhead h1 span{color:var(--muted);font-weight:600}
 .runmeta{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:8px;color:var(--muted);font-size:13px}
@@ -232,7 +236,7 @@ pre.code .k{color:var(--k)} pre.code .s{color:var(--s)} pre.code .n{color:var(--
 
   <header class="runhead">
     <div>
-      <div class="brand"><span class="logo">t</span><b>testmania</b> <span id="h-version"></span> · reporte de corrida</div>
+      <div class="brand-row"><div class="brand"><span class="logo">t</span><b>testmania</b> <span id="h-version"></span> · reporte de corrida</div><label class="theme-pick">Tema <select id="theme-select" aria-label="Tema del reporte"></select></label></div>
       <h1><span id="h-suite" style="color:inherit;font-weight:inherit"></span> <span id="h-run"></span></h1>
       <div class="runmeta" id="h-meta"></div>
     </div>
@@ -734,6 +738,20 @@ export default handler("Cliente crea un pedido", async (ctx) => {
   const c = {}; REQ.forEach(r=>Object.keys(r.ann).forEach(k=>c[k]=(c[k]||0)+1));
   $("#ann-keys").innerHTML = Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([k,n])=>`<div class="row"><code>${esc(k)}</code><span>${esc(desc[k]||"")}</span><span class="num">${n} req.</span></div>`).join("");
 })();
+
+/* ---------- temas ---------- */
+// Para sumar un tema: agrega { id, label } aquí y su bloque de tokens :root[data-palette="<id>"] en el CSS.
+const THEMES = [{ id:"cobalto", label:"Cobalto" }];
+const THEME_KEY = "testcase.report.tema";
+function setTheme(id){
+  const t = THEMES.find(x=>x.id===id) || THEMES[0];
+  document.documentElement.dataset.palette = t.id;
+  $("#theme-select").value = t.id;
+  try { localStorage.setItem(THEME_KEY, t.id); } catch {}
+}
+$("#theme-select").innerHTML = THEMES.map(t=>`<option value="${t.id}">${esc(t.label)}</option>`).join("");
+$("#theme-select").addEventListener("change",e=>setTheme(e.target.value));
+setTheme((()=>{ try { return localStorage.getItem(THEME_KEY); } catch { return null; } })());
 
 /* ---------- arranque ---------- */
 function renderAll(){ renderUCs(); renderTimeline(); renderDetail(); }
