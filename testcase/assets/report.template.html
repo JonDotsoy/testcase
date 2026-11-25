@@ -2,7 +2,7 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500&family=JetBrains+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@600;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Inter:wght@400;500;600&family=Public+Sans:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=JetBrains+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@600;700;800&display=swap">
 <style>
 /* Temas: cada tema es un bloque de tokens bajo :root[data-palette="<id>"] (claro, y oscuro con data-theme / prefers-color-scheme). "cobalto" es el tema base de :root. */
 /* Layout: cabecera de corrida → resumen → casos de uso → línea de tiempo (waterfall) + panel de detalle fijo a la derecha en pantallas anchas */
@@ -64,6 +64,41 @@
 :root[data-palette="raycast"] .verdict{border-radius:8px}
 :root[data-palette="raycast"] .theme-pick select{background-color:var(--surface-2);border-color:#363739;border-radius:8px}
 :root[data-palette="raycast"] .eyebrow{letter-spacing:.073em}
+
+/* Tema «Nuxt»: terminal encendido en el espacio profundo. Siempre oscuro, planos azul-negro planos (sin degradados),
+   bordes de 1px en vez de sombras, verde #00dc82 como señal de "encendido" (logo, selección, aprobado). */
+:root[data-palette="nuxt"]{
+  --bg:#020618; --surface:#080e21; --surface-2:#0f172b; --ink:#ffffff; --muted:#90a1b9; --faint:#62748e; --line:#1d293d; --line-2:#151f33;
+  --accent:#00dc82; --accent-soft:#05301f; --brand:#00dc82; --run:#e2e8f0; --run-soft:#1d293d;
+  --http:#60a5fa; --grpc:#a156fe; --graphql:#f472b6; --ws:#fbbf24; --sql:#2dd4bf; --infra:#314158;
+  --pass:#00dc82; --pass-soft:#05301f; --fail:#fb7185; --fail-soft:#3b1320; --pend:#fbbf24; --pend-soft:#33270b;
+  --code-bg:#020618; --k:#c084fc; --s:#00dc82; --n:#fbbf24; --b:#60a5fa;
+  --f-display:"Public Sans",Inter,Arial,sans-serif;
+  --f-body:"Public Sans",Inter,Arial,sans-serif;
+  --f-mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+  color-scheme:dark}
+:root[data-palette="nuxt"] .runhead h1{font-weight:700;letter-spacing:-.025em}
+:root[data-palette="nuxt"] .runhead h1 span{font-weight:700}
+:root[data-palette="nuxt"] h2{font-weight:700;letter-spacing:-.015em}
+:root[data-palette="nuxt"] .logo{background:var(--brand);color:#0f172b;border-radius:6px}
+:root[data-palette="nuxt"] .brand b{color:var(--brand)}
+:root[data-palette="nuxt"] :is(.stat,.svc,.uc,.panel){border-color:var(--line);border-radius:8px;box-shadow:none}
+:root[data-palette="nuxt"] .uc{padding:12px 16px;gap:10px}
+:root[data-palette="nuxt"] .uc::before{display:none}
+:root[data-palette="nuxt"] .uc:hover{border-color:#314158}
+:root[data-palette="nuxt"] .uc[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+:root[data-palette="nuxt"] .uc-top>div{min-width:0}
+:root[data-palette="nuxt"] .uc .id{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root[data-palette="nuxt"] .uc h3{font-size:16px;font-weight:600;color:#e2e8f0}
+:root[data-palette="nuxt"] .pill{border-radius:999px;font-weight:600;box-shadow:inset 0 0 0 1px currentColor}
+:root[data-palette="nuxt"] .verb{border-radius:6px}
+:root[data-palette="nuxt"] .verb .m{color:#0f172b}
+:root[data-palette="nuxt"] :is(.explain,.pending-box,.running-box){border-radius:6px}
+:root[data-palette="nuxt"] .running-box{box-shadow:inset 0 0 0 1px #314158}
+:root[data-palette="nuxt"] .uc-foot{border-top:1px solid var(--line);font-family:var(--f-mono)}
+:root[data-palette="nuxt"] .verdict{border-radius:6px;box-shadow:inset 0 0 0 1px rgba(251,113,133,.35)}
+:root[data-palette="nuxt"] .verdict.passed{box-shadow:inset 0 0 0 1px rgba(0,220,130,.35)}
+:root[data-palette="nuxt"] .theme-pick select{background-color:var(--bg);border-color:#314158;border-radius:6px;color:#e2e8f0}
 
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.5;
@@ -778,7 +813,7 @@ export default handler("Cliente crea un pedido", async (ctx) => {
 
 /* ---------- temas ---------- */
 // Para sumar un tema: agrega { id, label } aquí y su bloque de tokens :root[data-palette="<id>"] en el CSS.
-const THEMES = [{ id:"cobalto", label:"Cobalto" }, { id:"raycast", label:"Raycast" }];
+const THEMES = [{ id:"cobalto", label:"Cobalto" }, { id:"raycast", label:"Raycast" }, { id:"nuxt", label:"Nuxt" }];
 const THEME_KEY = "testcase.report.tema";
 function setTheme(id){
   const t = THEMES.find(x=>x.id===id) || THEMES[0];
