@@ -7,7 +7,7 @@
 /* Layout: cabecera de corrida → resumen → casos de uso → línea de tiempo (waterfall) + panel de detalle fijo a la derecha en pantallas anchas */
 :root{
   --bg:#f3f5f8; --surface:#ffffff; --surface-2:#f8f9fb; --ink:#121720; --muted:#5a6475; --faint:#8a93a3; --line:#dde2ea; --line-2:#eaedf2;
-  --accent:#2b4fd6; --accent-soft:#e7ecfd;
+  --accent:#2b4fd6; --accent-soft:#e7ecfd; --run:var(--accent); --run-soft:var(--accent-soft);
   --http:#2563eb; --grpc:#7c3aed; --graphql:#c0267a; --ws:#c26a05; --sql:#0d8a7f; --infra:#94a0b4;
   --pass:#15803d; --pass-soft:#e4f4e9; --fail:#d42a2a; --fail-soft:#fde8e8; --pend:#a15c07; --pend-soft:#fbf0dc;
   --code-bg:#f6f7fa; --k:#7c3aed; --s:#0d7a4f; --n:#b4520a; --b:#2563eb;
@@ -99,7 +99,7 @@ button{font:inherit;color:inherit}
 .ucs{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,420px),1fr));gap:12px}
 .uc{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px 14px 18px;display:flex;flex-direction:column;gap:10px;cursor:pointer;position:relative;text-align:left;min-width:0}
 .uc::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--c)}
-.uc[data-s="pass"]{--c:var(--pass)} .uc[data-s="fail"]{--c:var(--fail)} .uc[data-s="pend"]{--c:var(--pend)} .uc[data-s="run"]{--c:var(--accent)}
+.uc[data-s="pass"]{--c:var(--pass)} .uc[data-s="fail"]{--c:var(--fail)} .uc[data-s="pend"]{--c:var(--pend)} .uc[data-s="run"]{--c:var(--run)}
 .uc:hover{border-color:var(--faint)}
 .uc[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .uc-top{display:flex;gap:10px;align-items:flex-start;justify-content:space-between}
@@ -107,11 +107,11 @@ button{font:inherit;color:inherit}
 .uc .id{font-family:var(--f-mono);font-size:11px;color:var(--faint)}
 .uc .desc{font-size:13px;color:var(--muted);margin:4px 0 0;line-height:1.45}
 .pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
-.pill.pass{background:var(--pass-soft);color:var(--pass)} .pill.fail{background:var(--fail-soft);color:var(--fail)} .pill.pend{background:var(--pend-soft);color:var(--pend)} .pill.run{background:var(--accent-soft);color:var(--accent)}
+.pill.pass{background:var(--pass-soft);color:var(--pass)} .pill.fail{background:var(--fail-soft);color:var(--fail)} .pill.pend{background:var(--pend-soft);color:var(--pend)} .pill.run{background:var(--run-soft);color:var(--run)}
 .pill.run .spin{width:9px;height:9px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;flex:none}
 @media (prefers-reduced-motion:no-preference){.pill.run .spin{animation:spin .9s linear infinite}}
 @keyframes spin{to{transform:rotate(360deg)}}
-.running-box{background:var(--accent-soft);border-radius:6px;padding:8px 10px;font-size:12.5px}
+.running-box{background:var(--run-soft);border-radius:6px;padding:8px 10px;font-size:12.5px}
 .gwt{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:13px;margin:0}
 .gwt dt{font-family:var(--f-mono);font-size:11px;color:var(--faint);text-transform:uppercase;padding-top:2px}
 .gwt dd{margin:0;min-width:0}
@@ -452,8 +452,8 @@ const T_END = Math.max(...REQ.map(r=>r.start+(r.open?0:r.dur)), 0);
   v.className = "verdict "+RUN.status;
   v.innerHTML = `<span class="dot"></span><div>${RUN.status==="passed"?"Todos los casos de uso pasaron":RUN.status==="error"?"La corrida no terminó":u.failed+(u.failed===1?" caso de uso falló":" casos de uso fallaron")}<small>Código de salida ${RUN.exitCode} · ${fmtMs(RUN.durationMs)} en total</small></div>`;
   document.getElementById("st-uc").textContent = u.total;
-  document.getElementById("st-uc-seg").innerHTML = [["pass",u.passed],["fail",u.failed],["pend",u.pending],["accent",u.running||0]].filter(x=>x[1]).map(([k,n])=>`<i style="flex:${n};background:var(--${k})"></i>`).join("");
-  document.getElementById("st-uc-lg").innerHTML = `<span><i class="sw" style="background:var(--pass)"></i>${u.passed} aprobados</span><span><i class="sw" style="background:var(--fail)"></i>${u.failed} fallidos</span><span><i class="sw" style="background:var(--pend)"></i>${u.pending} pendiente${u.pending===1?"":"s"}</span>${u.running?`<span><i class="sw" style="background:var(--accent)"></i>${u.running} en progreso</span>`:""}`;
+  document.getElementById("st-uc-seg").innerHTML = [["pass",u.passed],["fail",u.failed],["pend",u.pending],["run",u.running||0]].filter(x=>x[1]).map(([k,n])=>`<i style="flex:${n};background:var(--${k})"></i>`).join("");
+  document.getElementById("st-uc-lg").innerHTML = `<span><i class="sw" style="background:var(--pass)"></i>${u.passed} aprobados</span><span><i class="sw" style="background:var(--fail)"></i>${u.failed} fallidos</span><span><i class="sw" style="background:var(--pend)"></i>${u.pending} pendiente${u.pending===1?"":"s"}</span>${u.running?`<span><i class="sw" style="background:var(--run)"></i>${u.running} en progreso</span>`:""}`;
   document.getElementById("st-dur").textContent = fmtMs(RUN.durationMs);
   document.getElementById("st-dur-sub").textContent = `${fmtMs(ph.provisioningMs)} provisionando · ${fmtMs(ph.buildMs)} compilando handlers · ${fmtMs(ph.testsMs)} en pruebas · ${fmtMs(ph.teardownMs)} desmontaje`;
 })();
