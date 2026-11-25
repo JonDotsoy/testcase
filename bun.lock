@@ -19,9 +19,27 @@
         "playwright": "^1.63.0",
       },
     },
+    "packages/testcase-report-dto": {
+      "name": "@jondotsoy/testcase-report-dto",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "^4.1.0",
+      },
+    },
+    "packages/testcase-view-report": {
+      "name": "@jondotsoy/testcase-view-report",
+      "version": "0.0.0",
+      "dependencies": {
+        "@jondotsoy/testcase-report-dto": "0.0.0",
+      },
+    },
   },
   "packages": {
     "@jondotsoy/testcase": ["@jondotsoy/testcase@workspace:packages/testcase"],
+
+    "@jondotsoy/testcase-report-dto": ["@jondotsoy/testcase-report-dto@workspace:packages/testcase-report-dto"],
+
+    "@jondotsoy/testcase-view-report": ["@jondotsoy/testcase-view-report@workspace:packages/testcase-view-report"],
 
     "@types/node": ["@types/node@22.10.2", "", { "dependencies": { "undici-types": "~6.20.0" } }, "sha512-Xxr6BBRCAOQixvonOye19wnzyDiUtTeqldOOmj3CkeblonbccA12PFwlufvRdrpjXxqnmUaeiU5EOA+7s5diUQ=="],
 
@@ -44,5 +62,7 @@
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
     "undici-types": ["undici-types@6.20.0", "", {}, "sha512-Ny6QZ2Nju20vw1SRHe3d9jVu6gJ+4e3+MMpqu7pqE5HT6WsTSlce++GQmK5UXS8mzV8DSYHrQH+Xrf2jVcuKNg=="],
+
+    "zod": ["zod@4.6.7", "", {}, "sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg=="],
   }
 }

@@ -2,15 +2,15 @@
   "name": "testcase-monorepo",
   "private": true,
   "type": "module",
-  "description": "Raíz del workspace: el paquete @jondotsoy/testcase (packages/testcase) y la skill testcase (testcase/).",
+  "description": "Raíz del workspace: los paquetes de packages/ (@jondotsoy/testcase, @jondotsoy/testcase-report-dto, @jondotsoy/testcase-view-report) y la skill testcase (testcase/).",
   "license": "MIT",
   "scripts": {
     "test": "node --test --test-concurrency=1 \"tests/*.test.ts\"",
     "test:unit": "node --test --test-concurrency=1 \"tests/unit-*.test.ts\"",
     "test:e2e": "node --test \"tests/e2e.test.ts\"",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p packages/testcase/tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p packages/testcase/tsconfig.json && tsc --noEmit -p packages/testcase-report-dto/tsconfig.json && tsc --noEmit -p packages/testcase-view-report/tsconfig.json",
     "docs:screenshots": "node docs/screenshots.ts",
-    "build": "npm run build -w @jondotsoy/testcase",
+    "build": "npm run build -w @jondotsoy/testcase-report-dto && npm run build -w @jondotsoy/testcase-view-report && npm run build -w @jondotsoy/testcase",
     "pack:dist": "npm run pack:dist -w @jondotsoy/testcase",
     "sync:skill": "node scripts/sync-skill.ts"
   },

@@ -1,0 +1,31 @@
+{
+  "name": "@jondotsoy/testcase-view-report",
+  "version": "0.0.0",
+  "description": "Genera el reporte HTML de testcase a partir de report.json.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Jonathan Delgado",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JonDotsoy/testcase.git",
+    "directory": "packages/testcase-view-report"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "pack:dist": "node scripts/build.ts && npm pack ./dist",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "dependencies": {
+    "@jondotsoy/testcase-report-dto": "0.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

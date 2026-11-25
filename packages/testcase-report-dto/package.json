@@ -1,0 +1,31 @@
+{
+  "name": "@jondotsoy/testcase-report-dto",
+  "version": "0.0.0",
+  "description": "Esquema del reporte de testcase (report.json) en zod: tipos y validación.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Jonathan Delgado",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JonDotsoy/testcase.git",
+    "directory": "packages/testcase-report-dto"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "pack:dist": "node scripts/build.ts && npm pack ./dist",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "dependencies": {
+    "zod": "^4.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
