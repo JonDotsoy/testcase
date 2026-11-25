@@ -100,6 +100,35 @@
 :root[data-palette="nuxt"] .verdict.passed{box-shadow:inset 0 0 0 1px rgba(0,220,130,.35)}
 :root[data-palette="nuxt"] .theme-pick select{background-color:var(--bg);border-color:#314158;border-radius:6px;color:#e2e8f0}
 
+/* Tema «Perplexity»: pergamino de estudio tras un vidrio limpio. Siempre claro, cálido y plano:
+   lienzo #faf8f5 (nunca blanco puro), tinta #27251e, bordes finos #d1d1cd, un solo teal #016a71 para selección. Pesos 400–500. */
+:root[data-palette="perplexity"]{
+  --bg:#faf8f5; --surface:#fdfbfa; --surface-2:#f3f0eb; --ink:#27251e; --muted:#72706b; --faint:#92918b; --line:#d1d1cd; --line-2:#e6e3dd;
+  --accent:#016a71; --accent-soft:#e1eeee; --brand:#27251e; --run:#016a71; --run-soft:#e1eeee;
+  --http:#3a6ea5; --grpc:#7a5aa6; --graphql:#a54f7d; --ws:#a8701c; --sql:#2f7d6d; --infra:#b5b2ab;
+  --pass:#2f7a4c; --pass-soft:#e6f0e8; --fail:#b23a32; --fail-soft:#f6e4e1; --pend:#956312; --pend-soft:#f4ecdc;
+  --code-bg:#f3f0eb; --k:#7a5aa6; --s:#2f7a4c; --n:#a8701c; --b:#3a6ea5;
+  --f-display:Inter,system-ui,-apple-system,sans-serif;
+  --f-body:Inter,system-ui,-apple-system,sans-serif;
+  color-scheme:light}
+:root[data-palette="perplexity"] :is(h1,h2,h3,b,strong,.runhead h1,.runhead h1 span,.uc h3){font-weight:500}
+:root[data-palette="perplexity"] .runhead h1{letter-spacing:-.01em}
+:root[data-palette="perplexity"] .logo{background:var(--brand);color:var(--bg);border-radius:5px}
+:root[data-palette="perplexity"] :is(.stat,.svc,.uc,.panel){border-color:var(--line);border-radius:16px;box-shadow:rgba(0,0,0,.08) 0 1px 2px 0}
+:root[data-palette="perplexity"] .uc{padding:16px;gap:10px}
+:root[data-palette="perplexity"] .uc::before{display:none}
+:root[data-palette="perplexity"] .uc:hover{border-color:var(--faint)}
+:root[data-palette="perplexity"] .uc[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+:root[data-palette="perplexity"] .uc-top>div{min-width:0}
+:root[data-palette="perplexity"] .uc .id{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root[data-palette="perplexity"] .uc h3{font-size:16px}
+:root[data-palette="perplexity"] .pill{border-radius:9999px;font-weight:500}
+:root[data-palette="perplexity"] .verb{border-radius:6px}
+:root[data-palette="perplexity"] :is(.explain,.pending-box,.running-box){border-radius:12px;padding:10px 12px}
+:root[data-palette="perplexity"] .uc-foot{border-top:1px solid var(--line-2)}
+:root[data-palette="perplexity"] .verdict{border-radius:12px;font-weight:500}
+:root[data-palette="perplexity"] .theme-pick select{background-color:var(--bg);border-color:var(--line);border-radius:6px;color:var(--muted)}
+
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.5;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 48px}
@@ -813,7 +842,7 @@ export default handler("Cliente crea un pedido", async (ctx) => {
 
 /* ---------- temas ---------- */
 // Para sumar un tema: agrega { id, label } aquí y su bloque de tokens :root[data-palette="<id>"] en el CSS.
-const THEMES = [{ id:"cobalto", label:"Cobalto" }, { id:"raycast", label:"Raycast" }, { id:"nuxt", label:"Nuxt" }];
+const THEMES = [{ id:"cobalto", label:"Cobalto" }, { id:"raycast", label:"Raycast" }, { id:"nuxt", label:"Nuxt" }, { id:"perplexity", label:"Perplexity" }];
 const THEME_KEY = "testcase.report.tema";
 function setTheme(id){
   const t = THEMES.find(x=>x.id===id) || THEMES[0];
