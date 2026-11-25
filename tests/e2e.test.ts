@@ -334,7 +334,7 @@ describe("report.html en el navegador", { skip: chromiumError ?? false, timeout:
     }
   });
 
-  it("la cabecera tiene un selector de temas con Cobalto, Raycast, Nuxt y Perplexity", async () => {
+  it("la cabecera tiene un selector de temas con Cobalto, Raycast, Nuxt, Perplexity y Vercel", async () => {
     const { chromium } = await import("playwright");
     const { tempDir, ASSETS } = await import("./helpers.ts");
     const { dir, cleanup } = tempDir();
@@ -350,7 +350,7 @@ describe("report.html en el navegador", { skip: chromiumError ?? false, timeout:
       await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.fulfill({ status: 200, contentType: "text/css", body: "" }));
       await page.goto("file://" + join(dir, "tema.html"));
       const select = page.locator("header #theme-select");
-      assert.deepEqual(await select.locator("option").allTextContents(), ["Cobalto", "Raycast", "Nuxt", "Perplexity"]);
+      assert.deepEqual(await select.locator("option").allTextContents(), ["Cobalto", "Raycast", "Nuxt", "Perplexity", "Vercel"]);
       assert.equal(await select.inputValue(), "cobalto");
       assert.equal(await page.evaluate(() => document.documentElement.dataset.palette), "cobalto");
       // Raycast: siempre oscuro, lienzo #040506; la elección se recuerda al recargar

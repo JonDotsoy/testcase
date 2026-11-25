@@ -2,7 +2,7 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Inter:wght@400;500;600&family=Public+Sans:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=JetBrains+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@600;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Inter:wght@400;500;600&family=Public+Sans:wght@400;500;600;700&family=Geist:wght@400;500&family=Geist+Mono:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@600;700;800&display=swap">
 <style>
 /* Temas: cada tema es un bloque de tokens bajo :root[data-palette="<id>"] (claro, y oscuro con data-theme / prefers-color-scheme). "cobalto" es el tema base de :root. */
 /* Layout: cabecera de corrida → resumen → casos de uso → línea de tiempo (waterfall) + panel de detalle fijo a la derecha en pantallas anchas */
@@ -128,6 +128,44 @@
 :root[data-palette="perplexity"] .uc-foot{border-top:1px solid var(--line-2)}
 :root[data-palette="perplexity"] .verdict{border-radius:12px;font-weight:500}
 :root[data-palette="perplexity"] .theme-pick select{background-color:var(--bg);border-color:var(--line);border-radius:6px;color:var(--muted)}
+
+/* Tema «Vercel»: terminal tipografiado sobre papel blanco. Siempre claro y monocromo:
+   lienzo #fafafa, tarjetas #ffffff con anillo fino (sin sombras), texto #171717/#4d4d4d/#666666, radio 6px,
+   Geist para leer y Geist Mono en mayúsculas para etiquetas. El color queda solo para el estado (verde terminal #297a3a). */
+:root[data-palette="vercel"]{
+  --bg:#fafafa; --surface:#ffffff; --surface-2:#fafafa; --ink:#171717; --muted:#4d4d4d; --faint:#8f8f8f; --line:#ebebeb; --line-2:#f2f2f2;
+  --accent:#171717; --accent-soft:#ebebeb; --brand:#000000; --run:#171717; --run-soft:#f2f2f2;
+  --http:#171717; --grpc:#4d4d4d; --graphql:#666666; --ws:#7d7d7d; --sql:#a8a8a8; --infra:#c9c9c9;
+  --pass:#297a3a; --pass-soft:#eaf4ec; --fail:#cb2a2f; --fail-soft:#fdeceb; --pend:#8f8f8f; --pend-soft:#f2f2f2;
+  --code-bg:#fafafa; --k:#171717; --s:#297a3a; --n:#4d4d4d; --b:#171717;
+  --f-display:Geist,Inter,system-ui,sans-serif;
+  --f-body:Geist,Inter,system-ui,sans-serif;
+  --f-mono:"Geist Mono","JetBrains Mono",ui-monospace,monospace;
+  --ring:0 0 0 1px rgba(0,0,0,.08),0 0 0 2px #fafafa;
+  color-scheme:light}
+:root[data-palette="vercel"] body{font-feature-settings:"calt" 0,"rlig","ss11"}
+:root[data-palette="vercel"] :is(h1,h2,h3,.runhead h1,.runhead h1 span,.uc h3){font-weight:500}
+:root[data-palette="vercel"] .runhead h1{font-weight:450;letter-spacing:-.05em;line-height:1}
+:root[data-palette="vercel"] .runhead h1 span{font-weight:450;color:var(--faint)}
+:root[data-palette="vercel"] h2{letter-spacing:-.03em}
+:root[data-palette="vercel"] .eyebrow{font-family:var(--f-mono);font-weight:400;letter-spacing:.071em;color:var(--ink)}
+:root[data-palette="vercel"] .logo{background:var(--brand);clip-path:polygon(50% 10%,100% 90%,0 90%);border-radius:0}
+:root[data-palette="vercel"] .logo>span{visibility:hidden}
+:root[data-palette="vercel"] :is(.stat,.svc,.uc,.panel){border-color:transparent;border-radius:6px;box-shadow:var(--ring)}
+:root[data-palette="vercel"] .uc{padding:16px;gap:12px}
+:root[data-palette="vercel"] .uc::before{display:none}
+:root[data-palette="vercel"] .uc:hover{box-shadow:0 0 0 1px rgba(0,0,0,.2),0 0 0 2px #fafafa}
+:root[data-palette="vercel"] .uc[aria-pressed="true"]{box-shadow:0 0 0 1px #171717,0 0 0 2px #fafafa}
+:root[data-palette="vercel"] .uc-top>div{min-width:0}
+:root[data-palette="vercel"] .uc .id{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.02em}
+:root[data-palette="vercel"] .uc h3{font-size:16px;letter-spacing:-.01em}
+:root[data-palette="vercel"] .pill{border-radius:9999px;font-family:var(--f-mono);font-weight:500;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;background:transparent;box-shadow:inset 0 0 0 1px currentColor}
+:root[data-palette="vercel"] .verb{border-radius:6px;border-color:var(--line)}
+:root[data-palette="vercel"] .verb .m{background:#171717;color:#fff}
+:root[data-palette="vercel"] :is(.explain,.pending-box,.running-box){border-radius:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06)}
+:root[data-palette="vercel"] .uc-foot{border-top:1px solid var(--line);font-family:var(--f-mono);font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
+:root[data-palette="vercel"] .verdict{border-radius:6px}
+:root[data-palette="vercel"] .theme-pick select{background-color:#fff;border-color:var(--line);border-radius:6px}
 
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.5;
@@ -842,7 +880,7 @@ export default handler("Cliente crea un pedido", async (ctx) => {
 
 /* ---------- temas ---------- */
 // Para sumar un tema: agrega { id, label } aquí y su bloque de tokens :root[data-palette="<id>"] en el CSS.
-const THEMES = [{ id:"cobalto", label:"Cobalto" }, { id:"raycast", label:"Raycast" }, { id:"nuxt", label:"Nuxt" }, { id:"perplexity", label:"Perplexity" }];
+const THEMES = [{ id:"cobalto", label:"Cobalto" }, { id:"raycast", label:"Raycast" }, { id:"nuxt", label:"Nuxt" }, { id:"perplexity", label:"Perplexity" }, { id:"vercel", label:"Vercel" }];
 const THEME_KEY = "testcase.report.tema";
 function setTheme(id){
   const t = THEMES.find(x=>x.id===id) || THEMES[0];
